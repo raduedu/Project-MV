@@ -384,3 +384,48 @@ def test_memory_holds_past_car_states(car):
     # sample j (1-based) is the state j*every decisions before the current one
     for j in range(1, 5):
         assert torch.allclose(hist[j - 1], cores[-1 - 2 * j].clamp(-5, 5), atol=1e-5)
+
+
+def test_recover_on_crash_puts_the_car_back_and_continues(car):
+    cfg = quiet_config(recover_on_crash=True, max_recoveries=2)
+    env = RacingEnv(car, TrackBatch([circle_track(80.0, 6.0)]), 1, cfg, device="cpu")
+    env.fixed_start = (0, 0.0)
+    env.reset(torch.arange(1))
+    env.sim.vx[:] = 35.0                                     # far too fast for an 80 m circle, no steering
+    recovered, terminated = 0, False
+    for _ in range(600):
+        _, rew, term, _, info = env.step(torch.tensor([[0.0, 1.0]]))
+        if bool(info["recovered"][0]):
+            recovered += 1
+            assert float(rew[0]) < -env.cfg.crash_penalty * 0.9          # the mistake still costs
+            assert abs(float(env.lat[0])) < 0.5 and abs(float(env.head_err[0])) < 0.05   # back on, pointing the right way
+        if bool(term[0]):
+            terminated = True
+            break
+    assert recovered == 2 and terminated, "two rejoins, then the third off ends the episode"
+
+
+def test_lap_memory_remembers_last_lap(car):
+    track = circle_track(120.0, 8.0)
+    cfg = quiet_config(lap_memory=True)
+    env = RacingEnv(car, TrackBatch([track]), 1, cfg, device="cpu")
+    env.fixed_start = (0, 0.0)
+    env.reset(torch.arange(1))
+    lay = env.obs_layout["lap_memory"]
+    n = len(env.cfg.lookahead_m)
+    driver = ScriptedDriver(env)
+    obs = env.observe()
+    assert (obs[0, lay][2 * n:] == 0).all(), "nothing is known before the first lap"
+    speeds = []
+    while int(env.lap_count[0]) < 2:
+        a, _, _ = driver.act(obs)
+        obs, *_ = env.step(a)
+        speeds.append(float(env.sim.vx[0]))
+    block = obs[0, lay]
+    known = block[2 * n:]
+    assert (known == 1).all(), "after a full lap every section ahead has a memory"
+    v_last = block[:n] * 50.0
+    # on a constant circle the remembered speed ahead is close to the speed actually driven
+    assert float(v_last[:10].mean()) == pytest.approx(float(np.mean(speeds[-50:])), rel=0.1)
+    u_last = block[n:2 * n]
+    assert 0.2 < float(u_last.mean()) < 1.5                  # a cautious driver: below the limit, but not idle

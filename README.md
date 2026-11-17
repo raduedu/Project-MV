@@ -60,6 +60,7 @@ All commands below are run from the project root with `.venv\Scripts\python.exe`
 | Tune a car to match the game (system identification) | record with `scripts\ac_drive.py ... --record x.npz`, then `scripts\sysid_fit.py --vehicle <car> x.npz` |
 | Drive in the game | `scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run` (then see its `--help`) |
 | Run the tests | `-m pytest tests -q` |
+| Publish / update the private GitHub repo | `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` |
 
 ## Cars included
 

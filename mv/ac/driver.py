@@ -103,7 +103,15 @@ class ObservationAdapter:
             env.idx[0] = int(d2.argmin())
             env.along[0] = 0.0
             self._located = True
-        env._locate()
+        progress = env._locate()
+        if fresh:
+            progress = torch.zeros_like(progress)
+        env.t_ep[0] = now
+        env.advance_laps(progress)
+        # lap memory (if the driver was trained with one): this section's speed and grip use;
+        # "off" = whole car beyond the edge, as in training
+        over = torch.maximum(env.lat - env.w_left, -env.lat - env.w_right) + env.half_width
+        env.update_lap_memory(over > env.half_width + env.cfg.off_track_margin_m)
         env.set_view(40.0 if self.blind else None)
         env.prev_action[0, 0], env.prev_action[0, 1] = float(prev_action[0]), float(prev_action[1])
         # memory (if the driver was trained with one): one sample per decision, as in training

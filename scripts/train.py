@@ -118,6 +118,10 @@ def main() -> None:
                     help="set the exploration noise to this value at the start (e.g. 0.1 after --init-from)")
     ap.add_argument("--history", type=int, default=0,
                     help="memory: number of past car-state samples in the observation (0 = off; e.g. 8 = last ~1 s)")
+    ap.add_argument("--limit-seeking", action="store_true",
+                    help="going off costs time (car is put back on) instead of ending the episode, the driver "
+                         "remembers last lap per track section, and episodes span several laps (log WP21)")
+    ap.add_argument("--episode-s", type=float, default=None, help="episode length in seconds (default 60; 240 with --limit-seeking)")
     ap.add_argument("--grip-range", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
                     help="tyre grip multiplier range for training cars (default 0.88 1.05)")
     ap.add_argument("--min-noise", type=float, default=None,
@@ -163,6 +167,12 @@ def main() -> None:
         env_cfg.history_steps = args.history
     if args.grip_range:
         env_cfg.rand_grip = tuple(args.grip_range)
+    if args.limit_seeking:
+        env_cfg.recover_on_crash = True
+        env_cfg.lap_memory = True
+        env_cfg.max_episode_s = 240.0
+    if args.episode_s:
+        env_cfg.max_episode_s = args.episode_s
     print(f"generating {args.tracks} training circuits ({args.preset}) ...", flush=True)
     pool = [random_track(rng, args.preset, name=f"train_{i}") for i in range(args.tracks)]
     ds = pool[0].ds

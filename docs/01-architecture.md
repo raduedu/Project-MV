@@ -15,6 +15,30 @@ and width. The trained driver is then plugged into Assetto Corsa (and, later, a
 real Formula Student car) through an adapter that produces the same observation
 from that world's sensors.
 
+## 1b. Guiding principle: always at the limit
+
+*Stated by the project owner, 2026-11-17:* the driver's purpose is pure racing.
+Whatever the car, the track or the conditions, it must drive **at the limit**:
+find it, sometimes go past it, and adjust — incrementally, lap after lap — so it
+becomes as fast as it possibly can. Sliding is normal and expected; it is how a
+driver finds the limit. Nothing in the design should make it timid.
+
+What this means in practice:
+
+* **Reward = time only.** The reward is progress per unit time; there is no
+  penalty for sliding, slip angle or tyre use. Mistakes cost what they cost on
+  track — lost time — plus a penalty only for actually leaving the circuit.
+* **Leaving the track is a mistake to learn from, not the end of the world.**
+  In "limit-seeking" training the car is put back on track and continues (with
+  the time lost), so it can try again on the next lap (engineering log WP21).
+* **Lap-to-lap adaptation.** The driver remembers, per section of the track,
+  how fast it went last lap and how close to the grip limit it was (or whether
+  it went off), so it can push a little harder where it had margin and back off
+  where it overstepped (WP21).
+* **Robust, not conservative.** Parameter changes (grip, mass, power, aero,
+  another car) are handled by sensing and adapting (memory, car descriptor),
+  not by leaving a safety margin.
+
 ## 2. The big picture
 
 ```

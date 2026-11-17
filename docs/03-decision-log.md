@@ -29,6 +29,7 @@ supersedes it — do not edit history.*
 | D-021 | Memory = stacked recent car states, appended; transfer by zero-initialised new inputs | active, under test |
 | D-022 | Blind episodes cut the lidar range too | active |
 | D-023 | Track preview = tightest curvature / narrowest width per stretch, not point samples | active |
+| D-024 | Limit-seeking training: recover-and-continue, lap memory, multi-lap episodes | active, under test |
 
 ---
 
@@ -298,3 +299,22 @@ supersedes it — do not edit history.*
   tool keep working.
 * **Evidence.** The previously trained driver completed Imola and Monza for the
   first time with this change alone, without retraining.
+
+### D-024 — Limit-seeking training
+
+* **Requirement (owner, 2026-11-17).** "The goal is for it to find the limit,
+  sometimes surpass it and then try again with an incremental change, so it
+  becomes as fast as it possibly can... no matter what parameters change the
+  goal is to be at the limit."
+* **Decision.** (1) Going off costs a penalty plus the time lost, and the car
+  rejoins — the episode continues. (2) A per-section lap memory (last lap's
+  minimum speed, maximum grip use, offs) is part of the observation.
+  (3) Episodes span several laps (240 s).
+* **Why.** Ending the episode on every mistake teaches "never make one", which
+  is exactly a timid driver; rejoining teaches "a mistake costs time, so
+  overstep only where it pays". The lap memory gives the driver the evidence to
+  adjust incrementally, as a racing driver uses reference points and the
+  feeling of last lap. All memory contents are measurable on a real car.
+* **Alternatives considered.** A recurrent network with very long memory
+  (implicit, slower to train, hard to inspect); a per-car grip estimate as
+  input (privileged in simulation, unavailable on a real car).

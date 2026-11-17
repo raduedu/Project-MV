@@ -96,6 +96,13 @@ class EnvConfig:
     rand_power: tuple[float, float] = (0.93, 1.03)
     rand_aero: tuple[float, float] = (0.9, 1.05)
     obs_clip: float = 5.0
+    # --- limit-seeking mode (engineering log WP21) ---
+    # The owner's principle: find the limit, sometimes overstep it, adjust lap after lap.
+    recover_on_crash: bool = False               # leaving the track costs time (car put back on), episode continues
+    recover_speed_frac: float = 0.4              # rejoin speed, as a fraction of the feasible speed there
+    max_recoveries: int = 6                      # after this many offs the episode does end
+    lap_memory: bool = False                     # per track section: last lap's min speed, closeness to the limit, offs
+    lap_memory_cell_m: float = 5.0               # length of one remembered section
 
 
 def _wrap_angle(a: torch.Tensor) -> torch.Tensor:
@@ -162,6 +169,12 @@ class RacingEnv:
         self.last_lap_time = torch.full((num_envs,), float("nan"), device=dev)
         self.ep_return, self.ep_len = z(), z()
         self.fixed_start: tuple[int, float] | None = None      # (point index, speed) for evaluation runs
+        self.recoveries = z(torch.long)
+        self.cell_pts = max(int(round(cfg.lap_memory_cell_m / ds)), 1)
+        n_cells = tracks.m_max // self.cell_pts + 2 if cfg.lap_memory else 1
+        self.mem_v = torch.full((num_envs, n_cells), -1.0, device=dev)   # slowest speed in the section last lap (-1 = none)
+        self.mem_u = torch.zeros(num_envs, n_cells, device=dev)          # highest grip use there (3 = went off)
+        self.mem_lap = torch.full((num_envs, n_cells), -1, device=dev, dtype=torch.long)
 
         self.car_desc = self._car_descriptor()
         self.num_actions = 2
@@ -174,6 +187,8 @@ class RacingEnv:
                  ("car_desc", len(self.car_desc))]
         if cfg.history_steps > 0:
             sizes.append(("history", cfg.history_steps * 15))
+        if cfg.lap_memory:
+            sizes.append(("lap_memory", 3 * len(cfg.lookahead_m)))
         self.obs_layout, start = {}, 0
         for key, size in sizes:
             self.obs_layout[key] = slice(start, start + size)
@@ -219,12 +234,7 @@ class RacingEnv:
             # Starting faster than this guarantees a crash and teaches nothing; starting
             # at a random fraction of it puts many episodes right into braking zones at
             # racing speed, which is exactly the hard part to learn.
-            ahead = tr.wrap(tid, idx[:, None] + self.safe_off[None])
-            kap = tr.kappa[tid[:, None], ahead].abs()
-            mu = 0.85 * self.mu_ref
-            v_c = torch.sqrt(mu * G / (kap - mu * self.k_aero).clamp(min=1e-5)).clamp(max=self.v_cap)
-            v_safe = torch.sqrt(v_c ** 2 + 2.0 * 0.75 * self.mu_ref * G * self.safe_m[None]).amin(1).clamp(max=self.v_cap)
-            v0 = v_safe * self._rand(k, *cfg.start_speed_frac)
+            v0 = self._feasible_speed(tid, idx) * self._rand(k, *cfg.start_speed_frac)
             v0 = torch.where(self._rand(k, 0, 1) < cfg.standing_start_prob, torch.zeros_like(v0), v0)
             room = (torch.minimum(tr.w_left[tid, idx], tr.w_right[tid, idx]) - self.half_width).clamp(min=0.0)
             lat0 = room * self._rand(k, -0.6, 0.6)
@@ -249,7 +259,80 @@ class RacingEnv:
         self.prev_action[ids] = 0.0
         self.lap_count[ids], self.lap_start_t[ids] = 0, 0.0
         self.ep_return[ids], self.ep_len[ids] = 0.0, 0.0
+        self.recoveries[ids] = 0
+        if cfg.lap_memory:
+            self.mem_v[ids], self.mem_u[ids], self.mem_lap[ids] = -1.0, 0.0, -1
         self.reset_history(ids)
+
+    def _feasible_speed(self, tid: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
+        """Highest speed from which every corner in the next 450 m can still be made.
+
+        Each corner allows v_c = sqrt(mu*g / curvature) (more with downforce), and from a
+        distance d before it we may be doing sqrt(v_c^2 + 2*braking*d).  Starting faster
+        than this guarantees a crash and teaches nothing.
+        """
+        tr = self.tracks
+        ahead = tr.wrap(tid, idx[:, None] + self.safe_off[None])
+        kap = tr.kappa[tid[:, None], ahead].abs()
+        mu = 0.85 * self.mu_ref
+        v_c = torch.sqrt(mu * G / (kap - mu * self.k_aero).clamp(min=1e-5)).clamp(max=self.v_cap)
+        return torch.sqrt(v_c ** 2 + 2.0 * 0.75 * self.mu_ref * G * self.safe_m[None]).amin(1).clamp(max=self.v_cap)
+
+    def _recover(self, ids: torch.Tensor) -> None:
+        """Put cars that left the track back on it, at the same place, slowly, pointing the right way."""
+        if len(ids) == 0:
+            return
+        tr, sim = self.tracks, self.sim
+        tid, idx = self.tid[ids], self.idx[ids]
+        psi, p = tr.psi[tid, idx], tr.xy[tid, idx]
+        v0 = self.cfg.recover_speed_frac * self._feasible_speed(tid, idx)
+        soc = sim.soc[ids].clone()                      # the battery does not refill by going off
+        sim.reset(ids, p[:, 0], p[:, 1], psi, v0)
+        sim.soc[ids] = soc
+        self.along[ids], self.lat[ids], self.head_err[ids] = 0.0, 0.0, 0.0
+        self.stall_t[ids] = 0.0
+        self.prev_action[ids] = 0.0
+        self.reset_history(ids)
+
+    # ------------------------------------------------------------------------
+    def grip_use(self) -> torch.Tensor:
+        """How close each car is to its grip limit right now (1.0 = at the limit).
+
+        The larger of: front/rear slip angle relative to the slip angle of peak grip,
+        and total acceleration relative to nominal grip (incl. downforce).  Both can be
+        measured on a real car (speeds, yaw rate, steering, accelerometer).
+        """
+        sim = self.sim
+        slip = sim.wheel_slip_angles()
+        sf = (slip[:, :2].mean(1) / sim.slip_peak[0]).abs()
+        sr = (slip[:, 2:].mean(1) / sim.slip_peak[2]).abs()
+        v2 = sim.vx ** 2 + sim.vy ** 2
+        g_use = torch.sqrt(sim.ax ** 2 + sim.ay ** 2) / (self.mu_ref * (G + self.k_aero * v2))
+        return torch.maximum(torch.maximum(sf, sr), g_use)
+
+    def advance_laps(self, progress: torch.Tensor) -> torch.Tensor:
+        """Add progress, count laps, time them.  Returns which cars just completed a lap."""
+        self.s_total += progress
+        length = self.tracks.length[self.tid]
+        lap_done = self.s_total >= (self.lap_count + 1).float() * length
+        self.last_lap_time = torch.where(lap_done, self.t_ep - self.lap_start_t, self.last_lap_time)
+        self.lap_start_t = torch.where(lap_done, self.t_ep, self.lap_start_t)
+        self.lap_count += lap_done.long()
+        return lap_done
+
+    def update_lap_memory(self, off: torch.Tensor) -> None:
+        """Record, for the section each car is in, its slowest speed and highest grip use this lap."""
+        if not self.cfg.lap_memory:
+            return
+        row = torch.arange(self.n, device=self.device)
+        cell = self.idx // self.cell_pts
+        v = torch.sqrt(self.sim.vx ** 2 + self.sim.vy ** 2)
+        u = torch.where(off, torch.full_like(v, 3.0), self.grip_use().clamp(max=3.0))
+        u = torch.nan_to_num(u, nan=3.0)
+        fresh = self.mem_lap[row, cell] != self.lap_count      # first visit of this section in this lap
+        self.mem_v[row, cell] = torch.where(fresh, v, torch.minimum(self.mem_v[row, cell], v))
+        self.mem_u[row, cell] = torch.where(fresh, u, torch.maximum(self.mem_u[row, cell], u))
+        self.mem_lap[row, cell] = self.lap_count
 
     def set_view(self, distance_m: float | None, ids: torch.Tensor | None = None) -> None:
         """Limit how far ahead the car can see (track preview and, if enabled, lidar).
@@ -372,6 +455,15 @@ class RacingEnv:
         parts = [car, self.prev_action[ids], pos, kappa, width, horizon, lidar, desc]
         if self.hist_len:
             parts.append(self.hist[ids][:, self.hist_idx].reshape(len(ids), -1))
+        if cfg.lap_memory:
+            cells = widx // self.cell_pts
+            mv = self.mem_v[ids[:, None, None], cells]
+            mu_ = self.mem_u[ids[:, None, None], cells]
+            known = mv >= 0
+            any_known = known.any(-1)
+            v_min = torch.where(known, mv, torch.full_like(mv, 1e3)).amin(-1)
+            u_max = torch.where(known, mu_, torch.zeros_like(mu_)).amax(-1)
+            parts += [torch.where(any_known, v_min / 50.0, torch.zeros_like(v_min)), u_max, any_known.float()]
         obs = torch.cat(parts, 1)
         return obs.clamp(-cfg.obs_clip, cfg.obs_clip)
 
@@ -405,14 +497,7 @@ class RacingEnv:
         progress = self._locate()
         self.t_ep += cfg.control_dt
         self.ep_len += 1
-        self.s_total += progress
-
-        # ---- lap timing -------------------------------------------------------
-        length = self.tracks.length[self.tid]
-        lap_done = self.s_total >= (self.lap_count + 1).float() * length
-        self.last_lap_time = torch.where(lap_done, self.t_ep - self.lap_start_t, self.last_lap_time)
-        self.lap_start_t = torch.where(lap_done, self.t_ep, self.lap_start_t)
-        self.lap_count += lap_done.long()
+        lap_done = self.advance_laps(progress)
 
         # ---- reward -------------------------------------------------------------
         over = (torch.maximum(self.lat - self.w_left, -self.lat - self.w_right) + self.half_width)  # body over the edge (m)
@@ -429,17 +514,28 @@ class RacingEnv:
         spun = self.head_err.abs() > cfg.max_heading_error_rad
         stalled = self.stall_t > cfg.stall_time_s
         bad = ~torch.isfinite(sim.vx + sim.vy + sim.r + sim.x + sim.y)
-        terminated = off | spun | stalled | bad
+        crash = off | spun | stalled
+        self.update_lap_memory(crash)
+        if cfg.recover_on_crash:
+            # limit-seeking: a mistake costs the penalty and the time lost; then try again
+            self.recoveries += crash.long()
+            give_up = crash & (self.recoveries > cfg.max_recoveries)
+            recover = crash & ~give_up & ~bad
+            terminated = give_up | bad
+        else:
+            recover = torch.zeros_like(crash)
+            terminated = crash | bad
         truncated = (self.t_ep >= cfg.max_episode_s) & ~terminated
-        reward = torch.where(terminated, reward - cfg.crash_penalty, reward)
+        reward = torch.where(crash | bad, reward - cfg.crash_penalty, reward)
         reward = torch.nan_to_num(reward, nan=-cfg.crash_penalty, posinf=0.0, neginf=-cfg.crash_penalty)
         self.prev_action = action
         self.ep_return += reward
         self.push_history()
 
         done = terminated | truncated
+        self._recover(recover.nonzero(as_tuple=False).squeeze(1))
         info: dict = {"off": off, "spun": spun, "stalled": stalled, "lap_done": lap_done,
-                      "lap_time": self.last_lap_time, "speed": speed, "progress": progress}
+                      "lap_time": self.last_lap_time, "speed": speed, "progress": progress, "recovered": recover}
         obs = self.observe()
         ids = done.nonzero(as_tuple=False).squeeze(1)
         if len(ids) > 0:

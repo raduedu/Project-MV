@@ -35,6 +35,8 @@ driver never trains on them.
 | `--grip-range LOW HIGH` | Hidden tyre-grip variation per episode | Default 0.88 1.05 |
 | `--reset-noise X` / `--min-noise X` | Exploration noise at the start / its floor | For fine-tuning a converged driver: e.g. 0.1 / 0.06 |
 | `--vehicle a,b,c` | One driver for several cars | Fleet is split evenly between them |
+| `--limit-seeking` | Going off costs time (car rejoins) instead of ending the episode; lap memory; 240 s episodes | The owner's "always at the limit" principle (architecture §1b). Changes the observation size |
+| `--episode-s S` | Episode length | Default 60 s (240 s with `--limit-seeking`) |
 | `--hours` / `--steps` / `--iters` | When to stop | Any one of them |
 | `--eval-every` | Updates between validation runs | 100 ≈ every 5–8 minutes |
 | `--warm-start` | First imitate the rule-based driver | See engineering log WP7 for the measured effect |

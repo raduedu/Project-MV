@@ -32,6 +32,7 @@ class LapResult:
     distance_m: float                 # progress made before the run ended
     max_speed: float
     off_track_steps: int              # decisions with any part of the car over the edge
+    recoveries: int = 0               # limit-seeking mode: times the car went off and was put back on
     trace: dict = field(default_factory=dict, repr=False)   # t, x, y, speed, steer, pedal, lat (numpy)
 
     @property
@@ -130,7 +131,7 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
     for i, t in enumerate(batch.tracks):
         out.append(LapResult(track=t.name, length_m=t.length, lap_times=lap_times[i], finished=reason[i] == "laps",
                              end_reason=reason[i], distance_m=float(dist[i]), max_speed=float(vmax[i]),
-                             off_track_steps=int(off_steps[i]),
+                             off_track_steps=int(off_steps[i]), recoveries=int(env.recoveries[i]),
                              trace={k: np.asarray(v) for k, v in traces[i].items()} if record else {}))
     return out
 

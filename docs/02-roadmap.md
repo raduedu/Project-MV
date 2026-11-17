@@ -131,7 +131,7 @@ at the level of the *trained network*, not only the code.
    (recurrent network or history encoder). This is what allows "greater and
    greater by each lap": it can *infer* grip, tyre state and its own car's
    quirks from how the car responded, and it can use the map built on lap 1.
-5. **Lap-over-lap learning on one track**: an explicit mode where the preview
+5. *(Mechanism done — limit-seeking training, engineering log WP21.)* **Lap-over-lap learning on one track**: an explicit mode where the preview
    horizon grows from "sensor range" on lap 1 to "full map" from lap 2, plus a
    learned or optimised reference line from `mv/planning` as extra input.
 

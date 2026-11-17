@@ -724,3 +724,57 @@ trained before this change still load and still drive, but should be
 fine-tuned. Running now: `gt3rs_v5_preview` (v2 + corrected preview only — the
 clean test of this fix) and `gt3rs_v4_memory` (corrected preview + memory +
 wider grip variation).
+
+## WP21 — Limit-seeking training ✅ (built and tested; first run queued)
+
+**Objective.** The owner's guiding principle (architecture §1b): *find the
+limit, sometimes overstep it, adjust incrementally lap after lap; sliding is
+fine; only lap time matters.* Two things in the training set-up worked against
+it: (1) leaving the track **ended** the episode, so the driver never got its
+"try again"; (2) episodes lasted 60 s — less than one lap of Imola — and the
+driver had no memory across laps.
+
+**Approach** (`EnvConfig`, switched on together by `train.py --limit-seeking`):
+- **Recover and continue** (`recover_on_crash`): leaving the track, spinning or
+  stalling costs the crash penalty, then the car is put back on the centre line
+  at the same place, pointing the right way, at 40 % of the feasible speed
+  there (battery charge kept). The time lost is the natural cost. After 6 offs
+  the episode does end.
+- **Lap memory** (`lap_memory`): the track is divided into 5 m sections; for
+  every section the car remembers its slowest speed and its highest *grip use*
+  last time through (1.0 = at the limit; 3.0 = went off there). Grip use is the
+  larger of slip angle ÷ slip angle of peak grip and total acceleration ÷
+  nominal grip — both measurable on a real car. For each of the 23 preview
+  stretches the driver sees: last lap's minimum speed, maximum grip use, and
+  whether anything is known (69 values, appended). This is exactly the
+  information needed to push where there was margin and back off where it
+  overstepped.
+- **Multi-lap episodes**: 240 s.
+- `--init-from` grows the network from a driver without these inputs (zero
+  weights for the new ones), so experience is kept.
+- Unchanged: no penalty on sliding, slip or tyre use — the reward is progress
+  per time.
+
+**Verification.** `test_recover_on_crash_puts_the_car_back_and_continues`
+(two rejoins, back on the centre line pointing the right way, third off ends
+the episode); `test_lap_memory_remembers_last_lap` (nothing known before the
+first lap; afterwards every section ahead is known and the remembered speed
+matches the speed driven). All 125 tests pass. CPU smoke run of
+`train.py --limit-seeking` grown from the memory driver (218 → 287 inputs)
+completes and validates.
+
+**Queued:** `gt3rs_limit_v1` — from `gt3rs_v4_memory`, `--history 8
+--limit-seeking --grip-range 0.82 1.08`, 3 h (lane 1, after v4). Evaluation
+with ≥3 laps will show whether lap times fall from lap 2 to lap 3 — the direct
+measure of "better each lap".
+
+## WP22 — GitHub (private repository) 🕓 (ready; needs the owner once)
+
+The owner asked for the project to be kept on their GitHub as a private
+repository "Project MV". GitHub does not allow spaces, so it will be
+**`Project-MV`**. The GitHub CLI is not installed on the laptop and creating
+the repository needs a one-time browser login, so it was prepared rather than
+done: `scripts/publish_github.ps1` checks for the CLI (prints the install
+command, installs nothing itself), logs in, refuses to publish if any Assetto
+Corsa data, runs or checkpoints are tracked, then creates the **private**
+repository and pushes (later runs: just pushes).
