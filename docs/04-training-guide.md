@@ -141,3 +141,25 @@ outcome into `engineering-log.md`.
 optionally waiting for a running process first. Format and an example are in
 the script's docstring; `runs/queue_lane1.json` is a real one. Two queues can run
 side by side: one run uses only ~40 % of this GPU.
+
+## 9. Pausing and resuming (taking the laptop away)
+
+All planned training is described in `runs/plan.json` (lanes of jobs, see
+`scripts/train_plan.py`). Three double-click files in the project folder:
+
+| File | What it does |
+|---|---|
+| `pause_training.cmd` | Every running training saves its driver after its current update (a few seconds) and stops; nothing new starts. Wait for **"It is safe to close the laptop."** |
+| `resume_training.cmd` | Continues every interrupted run from its saved driver — with the time already trained counted against its `--hours` — then the rest of the plan |
+| `status_training.cmd` | What is running, finished, paused or waiting, with the latest numbers |
+
+Same from a terminal: `.venv\Scripts\python.exe scripts\train_plan.py pause|resume|status`.
+
+Notes:
+- The pause lasts until you resume: `runs\PAUSE` exists while paused, and no
+  job will start (also not after a reboot).
+- Measured: pause took 10 s and lost nothing. A run started before pausing
+  existed is stopped instead after a 4-minute wait; it then loses at most the
+  last 25 updates (~1–2 minutes).
+- Closing the lid *without* pausing suspends Windows mid-training; it usually
+  continues after waking, but pausing first is the safe way.

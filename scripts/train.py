@@ -32,6 +32,10 @@ import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
+# Pausing: scripts/train_plan.py pause creates this file; the trainer saves and exits with
+# EXIT_PAUSED after the current update, so the run can later continue with --resume.
+PAUSE_FLAG = ROOT / "runs" / "PAUSE"
+EXIT_PAUSED = 3
 sys.path.insert(0, str(ROOT))
 
 from mv.envs.multi_car import MultiCarEnv  # noqa: E402
@@ -191,6 +195,15 @@ def main() -> None:
         ck = ppo.load(run / "latest.pt")
         best_score, it0 = ck.get("best_score", -1e9), ck.get("iteration", 0)
         print(f"resumed {run / 'latest.pt'} at update {it0}, {ppo.total_steps:,} decisions")
+        # the time budget (--hours) counts the whole run, not only this session
+        try:
+            last = (run / "log.csv").read_text().strip().splitlines()[-1].split(",")
+            hours_before = float(last[2])
+        except Exception:
+            hours_before = 0.0
+        print(f"already trained {hours_before:.2f} h of this run", flush=True)
+    else:
+        hours_before = 0.0
     if args.init_from is not None and it0 == 0:
         ck = torch.load(args.init_from, map_location=args.device, weights_only=False)
         load_grown(ppo.net, ck["model"])
@@ -202,7 +215,7 @@ def main() -> None:
             g["lr"] = ppo.lr
         print(f"initialised from {args.init_from} ({ck.get('total_steps', 0):,} decisions of experience)", flush=True)
         args.warm_start = False
-    if args.reset_noise is not None:
+    if args.reset_noise is not None and it0 == 0:          # not again when resuming
         import math as _math
         with torch.no_grad():
             ppo.net.log_std.fill_(_math.log(args.reset_noise))
@@ -235,6 +248,8 @@ def main() -> None:
     it = it0
     val_finished, val_score = float("nan"), float("nan")
     n_evals = 0
+    paused = False
+    hours = hours_before
     try:
         while True:
             it += 1
@@ -277,7 +292,7 @@ def main() -> None:
                     ppo.save(run / "best.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
 
             # ---- logging ------------------------------------------------------------------------
-            hours = (time.time() - t_start) / 3600.0
+            hours = hours_before + (time.time() - t_start) / 3600.0
             cat = lambda k: torch.cat(stats[k]).mean().item() if stats[k] else float("nan")  # noqa: E731
             row = [it, ppo.total_steps, round(hours, 4), cat("ep_return"), cat("ep_len") * env_cfg.control_dt, cat("ep_dist"),
                    stats["crashes"] / max(stats["episodes"], 1), stats["speed"] * 3.6, upd["kl"], upd["std"], upd["lr"],
@@ -302,16 +317,25 @@ def main() -> None:
             if it % 25 == 0:
                 ppo.save(run / "latest.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
 
-            if args.iters is not None and it - it0 >= args.iters:
+            # budgets count the whole run (a resumed run continues towards the same totals)
+            if args.iters is not None and it >= args.iters:
                 break
             if args.steps is not None and ppo.total_steps >= args.steps:
                 break
             if args.hours is not None and hours >= args.hours:
                 break
+            if PAUSE_FLAG.exists():                      # scripts/train_plan.py pause
+                paused = True
+                break
     except KeyboardInterrupt:
         print("\nstopped by user - saving the current driver", flush=True)
+        paused = True
     ppo.save(run / "latest.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
     log_f.close()
+    if paused:
+        print(f"paused at update {it}: driver saved to {run / 'latest.pt'}; continue with --resume", flush=True)
+        sys.exit(EXIT_PAUSED)
+    (run / "FINISHED").write_text(f"update {it}, {ppo.total_steps} decisions, {hours:.2f} h\n")
     print(f"done: {run}")
 
 

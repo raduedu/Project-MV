@@ -800,3 +800,39 @@ history on GitHub replaced (force-push with lease). GitHub now lists `raduedu`
 as sole author and contributor. Old history kept locally only, in branch
 `backup/before-coauthor-removal`. From now on no attribution lines are added
 (rule in `CLAUDE.md`).
+
+## WP23 — Pause and resume ✅
+
+**Objective (owner's request).** Be able to pause all training — e.g. to take
+the laptop to university — and continue later without losing work.
+
+**Approach.**
+- `train.py` checks for `runs/PAUSE` after every update; if present it saves
+  `latest.pt` and exits with code 3. On `--resume` the time budget counts the
+  whole run (hours already trained are read from `log.csv`), `--reset-noise`
+  is not applied again, and (new) the optimiser's momentum is restored from the
+  checkpoint. A normally finished run writes `runs/<name>/FINISHED`.
+- `scripts/train_plan.py` replaces `queue_runs.py`: the plan
+  (`runs/plan.json`: lanes of jobs) plus the markers in `runs/` are the whole
+  state, so `resume` always knows what is done, what to continue and what is
+  next. `pause` creates the flag, waits for every trainer to save, stops any
+  that do not react, and stops the supervisor. Double-click wrappers:
+  `pause_training.cmd`, `resume_training.cmd`, `status_training.cmd`.
+
+**Verification (live, on the two running trainings).**
+
+| Test | Result |
+|---|---|
+| Hand-over: controller adopts the two already-running jobs | ✅ "already running; waiting for it" |
+| Pause of runs started *before* the mechanism existed | ✅ stopped after the 4-min wait; v5 resumed at update 775 (lost 24 updates ≈ 1 min), v4 lost none |
+| Resume | ✅ both continued from `latest.pt`; "already trained 1.49 h / 1.47 h of this run" |
+| Pause of pause-aware runs | ✅ **10 s**, saved at the exact update (761, 788), nothing lost |
+| Resume again | ✅ |
+
+**Problems & resolutions**
+
+| # | Problem | Resolution |
+|---|---|---|
+| 23.1 | First update after a resume changed the policy ~6× more than the target (KL 0.078 vs 0.012) | Optimiser state was not saved → now saved/restored (effective from the next save) |
+| 23.2 | Resuming would have restarted the `--hours` budget and re-applied `--reset-noise` | Budget counts the whole run; noise reset only at the start |
+| 23.3 | The old `queue_runs.py` processes were parents of a running training | Stopped individually (not as a process tree) so the training survived the hand-over |

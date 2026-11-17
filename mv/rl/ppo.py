@@ -238,13 +238,19 @@ class PPO:
     def save(self, path, extra: dict | None = None) -> None:
         torch.save({"model": self.net.state_dict(), "ret_norm": self.ret_norm.state_dict(),
                     "cfg": asdict(self.cfg), "num_obs": self.env.num_obs, "num_actions": self.env.num_actions,
-                    "total_steps": self.total_steps, "lr": self.lr, **(extra or {})}, path)
+                    "total_steps": self.total_steps, "lr": self.lr,
+                    # optimiser momentum: without it a resumed run takes one oversized first step
+                    "opt": self.opt.state_dict(), **(extra or {})}, path)
 
     def load(self, path) -> dict:
         ck = torch.load(path, map_location=self.env.device, weights_only=False)
         self.net.load_state_dict(ck["model"])
         self.ret_norm.load_state_dict(ck["ret_norm"])
         self.total_steps, self.lr = ck.get("total_steps", 0), ck.get("lr", self.cfg.lr)
+        if "opt" in ck:
+            self.opt.load_state_dict(ck["opt"])
+        for g in self.opt.param_groups:
+            g["lr"] = self.lr
         return ck
 
 
