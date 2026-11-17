@@ -836,3 +836,47 @@ the laptop to university — and continue later without losing work.
 | 23.1 | First update after a resume changed the policy ~6× more than the target (KL 0.078 vs 0.012) | Optimiser state was not saved → now saved/restored (effective from the next save) |
 | 23.2 | Resuming would have restarted the `--hours` budget and re-applied `--reset-noise` | Budget counts the whole run; noise reset only at the start |
 | 23.3 | The old `queue_runs.py` processes were parents of a running training | Stopped individually (not as a process tree) so the training survived the hand-over |
+
+## WP24 — Control panel (web UI) and terminal command ✅
+
+**Objective (owner's request).** Control and follow training without asking the
+assistant: a terminal command with progress bars, and a simple local web
+interface that keeps running when the browser tab is closed.
+
+**Approach.**
+- `scripts/train_plan.py`: one `snapshot()` (plan, states, progress, latest
+  validation) feeds the terminal views and the web UI; new `watch` command
+  (refreshes every 5 s, bars, minutes left, decisions/s, pace, last lap times).
+  The supervisor now **re-reads the plan** and starts jobs/lanes added while
+  it runs; when everything is done it idles, waiting for new jobs.
+- `mvctl.cmd` (project folder): `status | watch | pause | resume | ui | ui-stop | tests | help`.
+- `scripts/webui.py` + `mv/ui/index.html`: Python standard library only, one
+  HTML file, no external libraries; listens on 127.0.0.1:8765 only. Tabs:
+  Dashboard (live lanes, progress, metrics, last validation, Pause/Resume),
+  Plan (add job with car(s), tracks, hours, start-from, memory, limit-seeking,
+  grip range; reorder; remove), Import (all Assetto Corsa cars and track
+  layouts, searchable), Tools (evaluate any checkpoint with plots, vehicle
+  check, reference lap — run as background tasks with live output), Runs
+  (smoothed pace and crash curves, validation lap times of the real circuits
+  over training, log tail, files, settings).
+
+**Verification (in the built-in browser, against the live trainings).**
+
+| Test | Result |
+|---|---|
+| All read endpoints | ✅ (state ~1.4 s because Windows is asked for the process list; cached 3 s) |
+| Import a track (Red Bull Ring GP) and a car (911 GT3 Cup 2017) from the page | ✅ both imported |
+| Vehicle check from the page | ✅ live output |
+| Pause from the page | ✅ PAUSING → PAUSED, both jobs "resumable" |
+| Resume from the page | ✅ RUNNING |
+| **Stop the web server after resuming from it** | ✅ supervisor and both trainings kept running |
+| New supervisor swapped in without interrupting training | ✅ adopted both running jobs |
+
+**Problems & resolutions**
+
+| # | Problem | Resolution |
+|---|---|---|
+| 24.1 | Progress bars crashed when output went to a pipe (Windows code page 1252) | Output forced to UTF-8 |
+| 24.2 | Two tasks started in the same second shared one ID and one log | Millisecond suffix + collision check |
+| 24.3 | **Stopping the web server would have stopped training** if Resume had been pressed in the page (the supervisor is then a child of the server, and stop killed the whole process tree) | Stop ends only the server process; verified by test |
+| 24.4 | Charts noisy; crash axis went below zero | Running-average line over the raw data; zero floor |

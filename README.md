@@ -40,6 +40,18 @@ python -m venv .venv
 
 All commands below are run from the project root with `.venv\Scripts\python.exe`.
 
+## Control panel and terminal command
+
+**Web interface** — `mvctl ui` (from the project folder; in PowerShell `.\mvctl ui`)
+opens **http://127.0.0.1:8765**: live progress of every training, Pause / Resume,
+the training plan (add, reorder, remove jobs), import of Assetto Corsa cars and
+tracks, evaluation, vehicle checks, reference laps, and charts of every run. It
+keeps running after the browser tab is closed; `mvctl ui-stop` stops it.
+Training never depends on it.
+
+**Terminal** — `mvctl status`, `mvctl watch` (live view with progress bars,
+Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
+
 ## Everyday commands
 
 | I want to… | Command |

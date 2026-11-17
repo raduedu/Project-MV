@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project MV</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --ink: #1d2330; --muted: #677085; --line: #e3e6ec;
+  --accent: #d5001c; --accent-ink: #fff; --ok: #1e8e4e; --warn: #c27a00; --bad: #c4302b; --info: #2f6fdb;
+  --bar: #e9ecf1; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14171c; --card: #1c2027; --ink: #e6e9ef; --muted: #98a1b3; --line: #2b313b; --bar: #2a3039; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+header { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 16px; padding: 10px 20px; flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0; letter-spacing: .3px; }
+header h1 span { color: var(--accent); }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { background: none; border: 0; padding: 7px 12px; border-radius: 6px; color: var(--muted); font: inherit; cursor: pointer; }
+nav button.on { background: var(--bg); color: var(--ink); font-weight: 600; }
+.spacer { flex: 1; }
+.pill { padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; letter-spacing: .4px; }
+.pill.running { background: #e3f5ea; color: var(--ok); } .pill.paused, .pill.stopped { background: #fdf0db; color: var(--warn); }
+.pill.pausing { background: #e5eefc; color: var(--info); } .pill.idle { background: var(--bar); color: var(--muted); }
+@media (prefers-color-scheme: dark) { .pill.running { background: #173525; } .pill.paused, .pill.stopped { background: #3a2c12; } .pill.pausing { background: #1b2a45; } }
+main { max-width: 1180px; margin: 0 auto; padding: 18px 20px 60px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 12px; }
+.card h3 { font-size: 13px; margin: 14px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+button.b { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+button.b:hover { border-color: var(--muted); }
+button.b.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.b:disabled { opacity: .45; cursor: default; }
+button.s { padding: 2px 8px; font-size: 12px; }
+.job { border-top: 1px solid var(--line); padding: 12px 0; }
+.job:first-of-type { border-top: 0; }
+.jobhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jobname { font-weight: 600; cursor: pointer; } .jobname:hover { text-decoration: underline; }
+.state { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 5px; background: var(--bar); color: var(--muted); text-transform: uppercase; }
+.state.running { background: #e3f5ea; color: var(--ok); } .state.done { background: #e5eefc; color: var(--info); }
+.state.failed { background: #fbe4e3; color: var(--bad); } .state.resumable { background: #fdf0db; color: var(--warn); }
+@media (prefers-color-scheme: dark) { .state.running { background: #173525; } .state.done { background: #1b2a45; } .state.failed { background: #401c1a; } .state.resumable { background: #3a2c12; } }
+.progress { height: 10px; background: var(--bar); border-radius: 99px; overflow: hidden; margin: 8px 0 6px; }
+.progress > div { height: 100%; background: linear-gradient(90deg, var(--accent), #ff5a4f); border-radius: 99px; transition: width .6s; }
+.progress.done > div { background: var(--info); }
+.metrics { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; }
+.metrics b { color: var(--ink); font-weight: 600; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--bar); font-family: var(--mono); }
+.chip.off { color: var(--bad); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+input[type=checkbox] { width: auto; margin-right: 6px; }
+.row { display: flex; gap: 10px; } .row > * { flex: 1; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 4px; }
+.checks label { color: var(--ink); font-size: 13px; margin: 0; display: flex; align-items: center; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+pre { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 10px; overflow: auto; max-height: 320px; white-space: pre-wrap; margin: 8px 0 0; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.list { max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.toast { position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: var(--card); padding: 10px 16px; border-radius: 8px; max-width: 420px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+.toast.show { opacity: .95; }
+.chart { width: 100%; height: 220px; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.imgs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.imgs img { max-width: 100%; width: 520px; border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; }
+.muted { color: var(--muted); }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Project <span>MV</span></h1>
+  <nav id="tabs">
+    <button data-tab="dash" class="on">Dashboard</button>
+    <button data-tab="plan">Plan</button>
+    <button data-tab="import">Import</button>
+    <button data-tab="tools">Tools</button>
+    <button data-tab="runs">Runs</button>
+  </nav>
+  <div class="spacer"></div>
+  <span id="pill" class="pill idle">…</span>
+  <button class="b" id="btnPause">Pause</button>
+  <button class="b primary" id="btnResume">Resume</button>
+</header>
+
+<main>
+<!-- ======================= DASHBOARD ======================= -->
+<section id="tab-dash">
+  <div id="lanes"></div>
+  <div class="card">
+    <h2>Supervisor log</h2>
+    <pre id="planlog" class="muted"></pre>
+    <div class="hint">Updated every 5 s. Closing this tab does not affect anything; training runs on its own.
+      Taking the laptop away? Press <b>Pause</b> and wait for the status to show <b>PAUSED</b>.</div>
+  </div>
+</section>
+
+<!-- ======================= PLAN ======================= -->
+<section id="tab-plan" class="hidden">
+  <div class="grid2">
+    <div class="card">
+      <h2>Training plan</h2>
+      <div class="hint">Lanes run side by side (two fit on the GPU); jobs in a lane run one after another.</div>
+      <div id="planlist"></div>
+    </div>
+    <div class="card">
+      <h2>Add a training job</h2>
+      <label>Name (letters, digits, _ and -)</label>
+      <input id="f_name" placeholder="e.g. gt3rs_limit_v2">
+      <label>Car(s) - several = one driver for all of them</label>
+      <div id="f_cars" class="checks"></div>
+      <div class="row">
+        <div><label>Tracks</label><select id="f_preset"></select></div>
+        <div><label>Hours</label><input id="f_hours" type="number" value="2" min="0.1" step="0.5"></div>
+        <div><label>Cars in parallel</label><select id="f_envs"><option>16384</option><option>8192</option><option>4096</option></select></div>
+      </div>
+      <label>Start from</label>
+      <select id="f_init"></select>
+      <div class="checks" style="margin-top:10px">
+        <label><input type="checkbox" id="f_limit" checked>Limit-seeking (rejoin after mistakes, lap memory)</label>
+        <label><input type="checkbox" id="f_hist" checked>Memory of the last second</label>
+      </div>
+      <div class="row">
+        <div><label>Grip varies from</label><input id="f_glo" type="number" value="0.82" step="0.01"></div>
+        <div><label>to</label><input id="f_ghi" type="number" value="1.08" step="0.01"></div>
+        <div><label>Reset exploration to</label><input id="f_noise" type="number" placeholder="(keep)" step="0.01"></div>
+      </div>
+      <label>Lane</label><select id="f_lane"></select>
+      <div style="margin-top:14px"><button class="b primary" id="btnAdd">Add to plan</button></div>
+      <div class="hint">Memory and limit-seeking change the driver's inputs: starting from a driver without them works
+        (the new inputs start at zero weight), but not the other way round.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= IMPORT ======================= -->
+<section id="tab-import" class="hidden">
+  <div class="card"><div class="hint" id="acroot">Looking for Assetto Corsa …</div></div>
+  <div class="grid2">
+    <div class="card">
+      <h2>Cars from Assetto Corsa</h2>
+      <input id="carq" placeholder="Search, e.g. porsche">
+      <div class="list" style="margin-top:8px"><table id="carlist"></table></div>
+      <div class="hint">Creates <code>vehicles/local/&lt;car&gt;.yaml</code> (kept off GitHub - it is Kunos data).</div>
+    </div>
+    <div class="card">
+      <h2>Tracks from Assetto Corsa</h2>
+      <input id="trackq" placeholder="Search, e.g. monza">
+      <div class="list" style="margin-top:8px"><table id="tracklist"></table></div>
+      <div class="hint">Creates <code>tracks/local/&lt;track&gt;.npz</code>; imported tracks are used for validation and evaluation, never for training.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= TOOLS ======================= -->
+<section id="tab-tools" class="hidden">
+  <div class="grid2">
+    <div class="card">
+      <h2>Evaluate a driver</h2>
+      <div class="row">
+        <div><label>Car</label><select id="e_car"></select></div>
+        <div><label>Driver</label><select id="e_pol"></select></div>
+      </div>
+      <label>Tracks</label><div id="e_tracks" class="checks"></div>
+      <div class="row">
+        <div><label>Random unseen tracks</label><input id="e_rand" type="number" value="2" min="0" max="10"></div>
+        <div><label>Laps</label><input id="e_laps" type="number" value="2" min="1" max="10"></div>
+        <div><label>Grip</label><input id="e_grip" type="number" value="1.0" step="0.01"></div>
+      </div>
+      <div class="checks" style="margin-top:10px">
+        <label><input type="checkbox" id="e_cmp" checked>Compare with the rule-based driver</label>
+        <label><input type="checkbox" id="e_blind">Blind (40 m of view, like a first lap)</label>
+      </div>
+      <div style="margin-top:14px"><button class="b primary" id="btnEval">Evaluate</button></div>
+    </div>
+    <div class="card">
+      <h2>Car and track tools</h2>
+      <label>Car</label><select id="t_car"></select>
+      <div style="margin-top:10px"><button class="b" id="btnCheck">Vehicle check (0-100, braking, cornering)</button></div>
+      <label>Track for the physics reference lap</label><select id="t_track"></select>
+      <div style="margin-top:10px"><button class="b" id="btnRef">Compute reference lap</button></div>
+      <div class="hint">The reference lap is the fastest lap physics allows (racing line + speed profile) - the yardstick for the driver.</div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Tasks</h2>
+    <div id="tasks" class="muted">No tasks yet.</div>
+  </div>
+</section>
+
+<!-- ======================= RUNS ======================= -->
+<section id="tab-runs" class="hidden">
+  <div class="card">
+    <div class="row" style="align-items:end">
+      <div><label>Run</label><select id="runsel"></select></div>
+      <div style="flex:0"><button class="b" id="btnRunRefresh">Refresh</button></div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h2>Pace along the track (km/h)</h2><svg id="ch_pace" class="chart"></svg></div>
+    <div class="card"><h2>Crashes per 100 km</h2><svg id="ch_crash" class="chart"></svg></div>
+  </div>
+  <div class="card"><h2>Validation lap times (flying lap, s) - real circuits</h2>
+    <svg id="ch_laps" class="chart"></svg><div id="lg_laps" class="legend"></div></div>
+  <div class="grid2">
+    <div class="card"><h2>Latest output</h2><pre id="runlog"></pre></div>
+    <div class="card"><h2>Files</h2><div id="runfiles"></div><h3>Settings</h3><pre id="runcfg"></pre></div>
+  </div>
+</section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (path, body) => {
+  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {});
+  const j = await r.json();
+  if (!r.ok || j.ok === false) throw new Error(j.msg || r.statusText);
+  return j;
+};
+const toast = (msg) => { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 4500); };
+const act = async (path, body) => { try { const j = await api(path, body); toast(j.msg || "Done"); return j; } catch (e) { toast("⚠ " + e.message); } };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const lap = t => t == null ? "—" : `${Math.floor(t / 60)}:${(t % 60).toFixed(3).padStart(6, "0")}`;
+let tab = "dash", options = null;
+
+// ---------------- tabs ----------------
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => show(b.dataset.tab));
+function show(name) {
+  tab = name;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("main > section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + name));
+  if (name === "plan" || name === "tools") loadOptions();
+  if (name === "import") loadAC();
+  if (name === "tools") loadTasks();
+  if (name === "runs") loadRuns();
+}
+
+// ---------------- dashboard ----------------
+$("#btnPause").onclick = () => act("/api/pause", {}).then(refresh);
+$("#btnResume").onclick = () => act("/api/resume", {}).then(refresh);
+async function refresh() {
+  let s; try { s = await api("/api/state"); } catch (e) { $("#pill").textContent = "SERVER?"; return; }
+  const pill = $("#pill"); pill.className = "pill " + s.overall; pill.textContent = s.overall.toUpperCase();
+  $("#btnPause").disabled = !(s.overall === "running" || s.overall === "idle");
+  $("#btnResume").disabled = s.overall === "running" || s.overall === "pausing" || s.overall === "idle";
+  $("#planlog").textContent = s.log.join("\n");
+  $("#lanes").innerHTML = s.lanes.map((jobs, k) => `<div class="card"><h2>Lane ${k + 1}</h2>${jobs.map(jobHTML).join("")}</div>`).join("")
+    + (s.others.length ? `<div class="card">Other training processes (not in the plan): ${esc(s.others.join(", "))}</div>` : "")
+    + (s.lanes.length ? "" : `<div class="card">No plan yet - add jobs under <b>Plan</b>.</div>`);
+  document.querySelectorAll(".jobname").forEach(el => el.onclick = () => { show("runs"); setTimeout(() => { $("#runsel").value = el.dataset.n; loadRun(); }, 300); });
+  if (tab === "plan") renderPlan(s);
+  window._state = s;
+}
+function jobHTML(j) {
+  const pct = Math.round(j.progress * 100), left = Math.max(j.hours_goal - j.hours, 0);
+  const m = [];
+  if (j.update) m.push(`<span>update <b>${j.update}</b></span>`, `<span><b>${(j.decisions / 1e6).toFixed(0)} M</b> decisions</span>`,
+                       `<span><b>${j.hours.toFixed(2)}</b> / ${j.hours_goal} h</span>`);
+  if (j.state === "running") {
+    m.push(`<span>~<b>${Math.round(left * 60)} min</b> left</span>`);
+    if (j.speed) m.push(`<span><b>${(j.speed / 1000).toFixed(0)}k</b>/s</span>`);
+  }
+  if (j.pace_kmh != null) m.push(`<span>pace <b>${j.pace_kmh.toFixed(0)}</b> km/h</span>`);
+  if (j.crashes_100km != null) m.push(`<span><b>${j.crashes_100km.toFixed(1)}</b> crashes/100 km</span>`);
+  const v = j.validation;
+  const chips = v ? `<div class="chips"><span class="chip">last check ${v.tracks.filter(t => t.lap).length}/${v.tracks.length}</span>` +
+    v.tracks.map(t => `<span class="chip ${t.lap ? "" : "off"}" title="${esc(t.note)}">${esc(t.track.replace("val_random_", "rnd"))} ${t.lap ? lap(t.lap) : "✗"}</span>`).join("") + "</div>" : "";
+  return `<div class="job"><div class="jobhead"><span class="jobname" data-n="${esc(j.name)}">${esc(j.name)}</span>
+    <span class="state ${j.state.replace(" ", "")}">${esc(j.state)}</span><span class="muted">${esc(j.vehicle)}</span>
+    <span class="spacer"></span><b>${pct}%</b></div>
+    <div class="progress ${j.state === "done" ? "done" : ""}"><div style="width:${pct}%"></div></div>
+    <div class="metrics">${m.join("")}</div>${chips}</div>`;
+}
+
+// ---------------- plan ----------------
+async function loadOptions() {
+  options = await api("/api/options");
+  $("#f_cars").innerHTML = options.vehicles.map(v => `<label><input type="checkbox" value="${esc(v.name)}">${esc(v.name)} <span class="muted">&nbsp;(${v.where})</span></label>`).join("");
+  $("#f_preset").innerHTML = options.presets.map(p => `<option>${p}</option>`).join("");
+  $("#f_init").innerHTML = `<option value="">scratch + copy the rule-based driver first (warm start)</option>` +
+    options.checkpoints.map(c => `<option>${esc(c)}</option>`).join("");
+  $("#f_lane").innerHTML = Array.from({length: options.lanes}, (_, k) => `<option value="${k}">lane ${k + 1}</option>`).join("") +
+    `<option value="${options.lanes}">new lane (runs in parallel)</option>`;
+  const vOpt = options.vehicles.map(v => `<option>${esc(v.name)}</option>`).join("");
+  $("#e_car").innerHTML = vOpt; $("#t_car").innerHTML = vOpt;
+  $("#e_pol").innerHTML = `<option value="">rule-based driver only</option>` + options.checkpoints.map(c => `<option>${esc(c)}</option>`).join("");
+  $("#e_tracks").innerHTML = options.tracks.map(t => `<label><input type="checkbox" value="${esc(t)}" checked>${esc(t)}</label>`).join("");
+  $("#t_track").innerHTML = options.tracks.map(t => `<option>${esc(t)}</option>`).join("");
+  if (window._state) renderPlan(window._state);
+}
+function renderPlan(s) {
+  $("#planlist").innerHTML = s.lanes.map((jobs, k) => `<h3>Lane ${k + 1}</h3><table>` + jobs.map(j =>
+    `<tr><td><b>${esc(j.name)}</b><div class="hint">${esc(j.vehicle)} · ${j.hours_goal} h</div></td>
+     <td><span class="state ${j.state.replace(" ", "")}">${esc(j.state)}</span></td>
+     <td style="white-space:nowrap;text-align:right">
+       <button class="b s" onclick="act('/api/plan/move',{name:'${j.name}',dir:-1}).then(refresh)">↑</button>
+       <button class="b s" onclick="act('/api/plan/move',{name:'${j.name}',dir:1}).then(refresh)">↓</button>
+       <button class="b s" ${j.state === "running" ? "disabled" : ""} onclick="if(confirm('Remove ${j.name} from the plan? (its files are kept)')) act('/api/plan/remove',{name:'${j.name}'}).then(refresh)">remove</button></td></tr>`).join("") + "</table>").join("")
+    || `<div class="muted">The plan is empty.</div>`;
+}
+$("#btnAdd").onclick = async () => {
+  const cars = [...document.querySelectorAll("#f_cars input:checked")].map(i => i.value);
+  const init = $("#f_init").value;
+  const j = await act("/api/plan/add", {
+    name: $("#f_name").value, vehicles: cars, preset: $("#f_preset").value, hours: $("#f_hours").value,
+    envs: $("#f_envs").value, init_from: init, warm_start: !init, limit_seeking: $("#f_limit").checked,
+    history: $("#f_hist").checked ? 8 : 0, grip_low: $("#f_glo").value, grip_high: $("#f_ghi").value,
+    reset_noise: $("#f_noise").value, lane: $("#f_lane").value});
+  if (j) { $("#f_name").value = ""; loadOptions(); refresh(); }
+};
+
+// ---------------- import ----------------
+let ac = null;
+async function loadAC() {
+  if (!ac) { ac = await api("/api/ac"); }
+  $("#acroot").innerHTML = ac.root ? `Assetto Corsa found at <code>${esc(ac.root)}</code> - ${ac.cars.length} cars, ${ac.tracks.length} track layouts.`
+                                   : "Assetto Corsa was not found on this computer.";
+  if (!options) await loadOptions();
+  drawAC();
+}
+function drawAC() {
+  const have = new Set(options.vehicles.filter(v => v.where === "local").map(v => v.name));
+  const haveT = new Set(options.tracks);
+  const cq = $("#carq").value.toLowerCase(), tq = $("#trackq").value.toLowerCase();
+  $("#carlist").innerHTML = ac.cars.filter(c => (c.id + " " + c.title).toLowerCase().includes(cq)).map(c =>
+    `<tr><td>${esc(c.title)}<div class="hint">${esc(c.id)}</div></td><td style="text-align:right">${have.has(c.id) ? '<span class="state done">imported</span> ' : ""}
+     <button class="b s" onclick="act('/api/import/car',{car:'${c.id}'}).then(()=>setTimeout(()=>{loadOptions().then(drawAC)},4000))">${have.has(c.id) ? "re-import" : "import"}</button></td></tr>`).join("");
+  $("#tracklist").innerHTML = ac.tracks.filter(t => t.toLowerCase().includes(tq)).map(t => {
+    const stem = t.includes(":") ? t.replace(":", "__") : t;
+    return `<tr><td>${esc(t)}</td><td style="text-align:right">${haveT.has(stem) ? '<span class="state done">imported</span> ' : ""}
+     <button class="b s" onclick="act('/api/import/track',{track:'${t}'}).then(()=>setTimeout(()=>{loadOptions().then(drawAC)},6000))">${haveT.has(stem) ? "re-import" : "import"}</button></td></tr>`;
+  }).join("");
+}
+$("#carq").oninput = drawAC; $("#trackq").oninput = drawAC;
+
+// ---------------- tools ----------------
+$("#btnEval").onclick = () => act("/api/evaluate", {
+  vehicle: $("#e_car").value, policy: $("#e_pol").value, tracks: [...document.querySelectorAll("#e_tracks input:checked")].map(i => i.value),
+  random: $("#e_rand").value, laps: $("#e_laps").value, grip: $("#e_grip").value, scripted: $("#e_cmp").checked, blind: $("#e_blind").checked}).then(loadTasks);
+$("#btnCheck").onclick = () => act("/api/check", {vehicle: $("#t_car").value}).then(loadTasks);
+$("#btnRef").onclick = () => act("/api/reference", {vehicle: $("#t_car").value, track: $("#t_track").value}).then(loadTasks);
+async function loadTasks() {
+  const ts = await api("/api/tasks");
+  $("#tasks").innerHTML = ts.length ? ts.map(t => `<div class="job"><div class="jobhead"><b>${esc(t.title)}</b>
+      <span class="state ${t.status === "running" ? "running" : t.status === "done" ? "done" : t.status.startsWith("failed") ? "failed" : ""}">${esc(t.status)}</span>
+      <span class="muted">${esc(t.started)}</span></div><pre>${esc(t.output)}</pre>
+      ${(t.images || []).length ? `<div class="imgs">${t.images.map(i => `<a href="/files/${encodeURI(i)}" target="_blank"><img src="/files/${encodeURI(i)}"></a>`).join("")}</div>` : ""}</div>`).join("")
+    : "No tasks yet.";
+}
+
+// ---------------- runs + charts ----------------
+async function loadRuns() {
+  const runs = await api("/api/runs");
+  const cur = $("#runsel").value;
+  $("#runsel").innerHTML = runs.map(r => `<option>${esc(r)}</option>`).join("");
+  if (cur && runs.includes(cur)) $("#runsel").value = cur;
+  loadRun();
+}
+$("#runsel").onchange = () => loadRun(); $("#btnRunRefresh").onclick = () => loadRun();
+const COLORS = ["#d5001c", "#2f6fdb", "#1e8e4e", "#c27a00", "#8e44ad", "#16a3b5", "#7f8c8d"];
+function lineChart(svg, series, opts = {}) {
+  const W = svg.clientWidth || 500, H = svg.clientHeight || 220, L = 46, R = 10, T = 10, B = 26;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const pts = series.flatMap(s => s.x.map((x, i) => [x, s.y[i]])).filter(p => p[1] != null && isFinite(p[1]) && p[0] != null);
+  if (!pts.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">no data yet</text>`; return; }
+  let [x0, x1] = [Math.min(...pts.map(p => p[0])), Math.max(...pts.map(p => p[0]))];
+  let ys = pts.map(p => p[1]).sort((a, b) => a - b);
+  let y0 = opts.y0 ?? ys[Math.floor(ys.length * 0.02)], y1 = opts.y1 ?? ys[Math.ceil(ys.length * 0.98) - 1];
+  if (y1 === y0) { y1 += 1; y0 -= 1; } if (x1 === x0) x1 += 1;
+  const pad = (y1 - y0) * 0.08; y0 = opts.y0 != null ? opts.y0 : y0 - pad; y1 += pad;
+  const X = x => L + (x - x0) / (x1 - x0) * (W - L - R), Y = y => T + (1 - (Math.min(Math.max(y, y0), y1) - y0) / (y1 - y0)) * (H - T - B);
+  let g = "";
+  for (let k = 0; k <= 4; k++) { const yv = y0 + (y1 - y0) * k / 4, yy = Y(yv);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="currentColor" opacity=".08"/><text x="${L - 6}" y="${yy + 4}" text-anchor="end">${opts.fmt ? opts.fmt(yv) : yv.toFixed(yv > 100 ? 0 : 1)}</text>`; }
+  for (let k = 0; k <= 4; k++) { const xv = x0 + (x1 - x0) * k / 4; g += `<text x="${X(xv)}" y="${H - 8}" text-anchor="middle">${xv.toFixed(xv > 100 ? 0 : 1)}${k === 4 ? " " + (opts.xlabel || "") : ""}</text>`; }
+  series.forEach((s, i) => {
+    let d = "", pen = false;
+    s.x.forEach((x, k) => { const y = s.y[k]; if (y == null || !isFinite(y)) { pen = false; return; } d += (pen ? "L" : "M") + X(x).toFixed(1) + "," + Y(y).toFixed(1); pen = true; });
+    g += `<path d="${d}" fill="none" stroke="${s.color || COLORS[i % COLORS.length]}" stroke-width="1.8"/>`;
+    if (s.dots) s.x.forEach((x, k) => { if (s.y[k] != null) g += `<circle cx="${X(x)}" cy="${Y(s.y[k])}" r="2.6" fill="${s.color || COLORS[i % COLORS.length]}"/>`; });
+  });
+  svg.innerHTML = g;
+}
+// running average, so the trend is visible through the update-to-update noise
+const smooth = (y, w = 9) => y.map((_, i) => { const s = y.slice(Math.max(0, i - w), i + w + 1).filter(v => v != null && isFinite(v)); return s.length ? s.reduce((a, b) => a + b, 0) / s.length : null; });
+async function loadRun() {
+  const name = $("#runsel").value; if (!name) return;
+  const d = await api("/api/run?name=" + encodeURIComponent(name));
+  const c = d.curves, h = c.hours || [];
+  const pace = c.pace_kmh || c.mean_speed_kmh || [], crash = c.crashes_per_100km || [];
+  lineChart($("#ch_pace"), [{x: h, y: pace, color: "#d5001c55"}, {x: h, y: smooth(pace), color: "#d5001c"}], {xlabel: "h"});
+  lineChart($("#ch_crash"), [{x: h, y: crash, color: "#2f6fdb55"}, {x: h, y: smooth(crash), color: "#2f6fdb"}], {xlabel: "h", y0: 0});
+  const real = [...new Set(d.validations.flatMap(v => Object.keys(v.tracks)))].filter(t => !t.startsWith("val_"));
+  const vs = d.validations.filter(v => v.update != null);
+  const series = real.map((t, i) => ({name: t, x: vs.map(v => v.update), y: vs.map(v => v.tracks[t] ?? null), dots: true, color: COLORS[i % COLORS.length]}));
+  lineChart($("#ch_laps"), series, {xlabel: "update", fmt: lap});
+  $("#lg_laps").innerHTML = series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)} (gaps = did not finish)</span>`).join("");
+  $("#runlog").textContent = d.log_tail || "";
+  $("#runfiles").innerHTML = d.files.map(f => /\.(png|csv|json|txt|log)$/.test(f) ? `<a href="/files/runs/${encodeURIComponent(name)}/${encodeURIComponent(f)}" target="_blank">${esc(f)}</a>` : esc(f)).join("<br>");
+  $("#runcfg").textContent = d.config ? Object.entries(d.config).filter(([k, v]) => v !== null && v !== false).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(" ") : v}`).join("\n") : "";
+}
+
+// ---------------- polling ----------------
+refresh();
+setInterval(() => { refresh(); if (tab === "tools") loadTasks(); }, 5000);
+</script>
+</body>
+</html>

@@ -144,6 +144,10 @@ side by side: one run uses only ~40 % of this GPU.
 
 ## 9. Pausing and resuming (taking the laptop away)
 
+Quickest: **`mvctl pause`** / **`mvctl resume`** in a terminal in the project
+folder (PowerShell: `.\mvctl pause`), or the Pause / Resume buttons of the web
+interface (`mvctl ui`). `mvctl watch` shows live progress bars.
+
 All planned training is described in `runs/plan.json` (lanes of jobs, see
 `scripts/train_plan.py`). Three double-click files in the project folder:
 
