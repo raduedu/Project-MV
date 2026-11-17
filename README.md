@@ -50,7 +50,7 @@ All commands below are run from the project root with `.venv\Scripts\python.exe`
 | Measure simulator speed | `scripts\benchmark_env.py --envs 16384` |
 | **Train** a driver | `scripts\train.py --vehicle ks_porsche_911_gt3_rs --name gt3rs_v1 --envs 16384 --tracks 512 --warm-start --hours 3` (see the training guide) |
 | Continue a training run | same command plus `--resume` |
-| Continue from a trained driver on new tracks | `scripts	rain.py --vehicle ks_porsche_911_gt3_rs --name gt3rs_v2 --init-from runs\gt3rs_v1\latest.pt --preset mixed+gp` |
+| Continue from a trained driver on new tracks | `scripts\train.py --vehicle ks_porsche_911_gt3_rs --name gt3rs_v2 --init-from runs\gt3rs_v1\latest.pt --preset mixed+gp` |
 | Train **one driver for several cars** | `scripts\train.py --vehicle ks_porsche_911_gt3_rs,porsche_taycan_turbo_gt_weissach,ks_porsche_918_spyder --name multi_v1 --warm-start --hours 3` |
 | Watch training curves | `.venv\Scripts\tensorboard.exe --logdir runs` |
 | Time a trained driver + plots | `scripts\evaluate.py --vehicle ks_porsche_911_gt3_rs --policy runs\gt3rs_v1\best.pt --scripted` |
