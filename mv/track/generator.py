@@ -42,7 +42,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from mv.track.track import Track
 
-__all__ = ["TrackGenConfig", "random_track", "random_tracks", "PRESETS"]
+__all__ = ["TrackGenConfig", "random_track", "random_tracks", "PRESETS", "max_length_m"]
 
 
 @dataclass
@@ -169,7 +169,17 @@ def random_track(rng: np.random.Generator | int | None = None, cfg: TrackGenConf
     if not isinstance(rng, np.random.Generator):
         rng = np.random.default_rng(rng)
     if isinstance(cfg, str):
-        cfg = PRESETS[cfg]
+        # "mixed+gp" = pick one of the listed presets at random for each track
+        names = cfg.split("+")
+        choice = names[int(rng.integers(len(names)))] if len(names) > 1 else names[0]
+        from mv.track.segments import SEGMENT_PRESETS, segment_track
+        if choice in SEGMENT_PRESETS:
+            return segment_track(rng, choice, name=name)
+        cfg = PRESETS[choice]
+    else:
+        from mv.track.segments import SegmentGenConfig, segment_track
+        if isinstance(cfg, SegmentGenConfig):
+            return segment_track(rng, cfg, name=name)
     last = None
     for _attempt in range(cfg.max_tries):
         xy, width, min_r, style = _candidate(rng, cfg)
@@ -192,3 +202,15 @@ def random_track(rng: np.random.Generator | int | None = None, cfg: TrackGenConf
 def random_tracks(count: int, seed: int | None = None, cfg: TrackGenConfig | str = "circuit") -> list[Track]:
     rng = np.random.default_rng(seed)
     return [random_track(rng, cfg, name=f"random_{i:04d}") for i in range(count)]
+
+
+def max_length_m(preset: str) -> float:
+    """Longest lap a preset (or a "a+b" mix of presets) can produce, in metres."""
+    from mv.track.segments import SEGMENT_PRESETS
+    out = 0.0
+    for name in preset.split("+"):
+        if name in SEGMENT_PRESETS:
+            out = max(out, SEGMENT_PRESETS[name].max_length_m * 1.02)
+        else:
+            out = max(out, PRESETS[name].length_m[1] * 1.15)
+    return out

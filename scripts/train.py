@@ -40,7 +40,7 @@ from mv.rl.evaluate import evaluate  # noqa: E402
 from mv.rl.ppo import PPO, PPOConfig  # noqa: E402
 from mv.rl.pretrain import warm_start  # noqa: E402
 from mv.control.scripted import ScriptedDriver  # noqa: E402
-from mv.track.generator import random_track, random_tracks  # noqa: E402
+from mv.track.generator import max_length_m, random_track, random_tracks  # noqa: E402
 from mv.track.track import Track, TrackBatch  # noqa: E402
 from mv.vehicle.params import find_vehicle, load_vehicle  # noqa: E402
 
@@ -76,7 +76,12 @@ def main() -> None:
     ap.add_argument("--name", default=None, help="run name (folder under runs/)")
     ap.add_argument("--envs", type=int, default=4096)
     ap.add_argument("--tracks", type=int, default=256, help="size of the pool of training circuits")
-    ap.add_argument("--preset", default="mixed", help="track generator preset: circuit, fs or mixed")
+    ap.add_argument("--preset", default="mixed",
+                    help="track generator preset(s): circuit, mixed, fs, gp, fs_segments; combine with + (e.g. mixed+gp)")
+    ap.add_argument("--val-preset", default=None,
+                    help="preset for the random validation tracks (default: the first one in --preset)")
+    ap.add_argument("--init-from", type=Path, default=None,
+                    help="start from the weights of an existing driver (.pt) instead of from scratch")
     ap.add_argument("--refresh-every", type=int, default=10, help="replace circuits every N updates")
     ap.add_argument("--refresh-frac", type=float, default=0.1, help="share of circuits replaced each time")
     ap.add_argument("--hours", type=float, default=None, help="stop after this much wall-clock time")
@@ -117,25 +122,36 @@ def main() -> None:
     ds = pool[0].ds
     # reserve room for the longest circuit the generator can produce, so replacements always fit
     from mv.track.generator import PRESETS
-    batch = TrackBatch(pool, device=args.device, ds=ds, min_points=int(PRESETS[args.preset].length_m[1] * 1.15 / ds))
+    batch = TrackBatch(pool, device=args.device, ds=ds, min_points=int(max_length_m(args.preset) / ds) + 8)
     if len(vps) == 1:
         env = RacingEnv(vp, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
     else:
         env = MultiCarEnv(vps, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
         args.envs = env.n
     ppo = PPO(env, ppo_cfg)
-    val = validation_tracks(args.preset, args.val_tracks)
+    val = validation_tracks(args.val_preset or args.preset.split("+")[0], args.val_tracks)
     best_score, it0 = -1e9, 0
     if args.resume and (run / "latest.pt").is_file():
         ck = ppo.load(run / "latest.pt")
         best_score, it0 = ck.get("best_score", -1e9), ck.get("iteration", 0)
         print(f"resumed {run / 'latest.pt'} at update {it0}, {ppo.total_steps:,} decisions")
+    if args.init_from is not None and it0 == 0:
+        ck = torch.load(args.init_from, map_location=args.device, weights_only=False)
+        ppo.net.load_state_dict(ck["model"])
+        ppo.ret_norm.load_state_dict(ck["ret_norm"])
+        # continue at the learning rate the driver ended with: a converged driver has very
+        # little exploration noise, so a fresh (larger) rate would change it far too abruptly
+        ppo.lr = float(ck.get("lr", ppo.lr))
+        for g in ppo.opt.param_groups:
+            g["lr"] = ppo.lr
+        print(f"initialised from {args.init_from} ({ck.get('total_steps', 0):,} decisions of experience)", flush=True)
+        args.warm_start = False
     if args.warm_start and it0 == 0:
         print("warm start: imitating the rule-based driver ...", flush=True)
         info = warm_start(ppo, env.scripted_teacher(), steps=args.warm_steps)
         print(f"warm start done: imitation error {info['imitation_error']:.4f}", flush=True)
     (run / "config.json").write_text(json.dumps({
-        "vehicle": args.vehicle, "args": vars(args), "env": asdict(env_cfg), "ppo": asdict(ppo_cfg),
+        "vehicle": args.vehicle, "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}, "env": asdict(env_cfg), "ppo": asdict(ppo_cfg),
         "num_obs": env.num_obs, "num_actions": env.num_actions}, indent=2))
     try:
         from torch.utils.tensorboard import SummaryWriter
@@ -190,8 +206,11 @@ def main() -> None:
                     if tb and r.finished:
                         tb.add_scalar(f"lap/{r.track}", r.flying_lap, ppo.total_steps)
                 print(f"  validation: {val_finished * 100:.0f} % of tracks completed\n" + "\n".join(lines), flush=True)
-                flying = [r.flying_lap for r in res if r.finished]
-                score = val_score * 1000.0 - (float(np.mean(flying)) if flying else 0.0) * (val_finished == 1.0)
+                # "best" = most validation tracks completed; among equals, the highest average
+                # speed over the completed tracks (km/h / 1000 can never outweigh one track)
+                speeds = [r.length_m / r.flying_lap * 3.6 for r in res if r.finished]
+                score = sum(r.finished for r in res) + (float(np.mean(speeds)) / 1000.0 if speeds else 0.0)
+                ppo.save(run / f"eval_{it:05d}.pt", {"iteration": it, "score": score, "vehicle": args.vehicle})
                 if score > best_score:
                     best_score = score
                     ppo.save(run / "best.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})

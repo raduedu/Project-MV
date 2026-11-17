@@ -24,6 +24,8 @@ supersedes it — do not edit history.*
 | D-016 | Evaluation runs on the CPU | active |
 | D-017 | Physics at 125 Hz (5 sub-steps per decision) | active |
 | D-018 | Multi-car training = several single-car environments behind one interface | active |
+| D-019 | Second track generator built from straights/corners/chicanes, mixed with the first | active |
+| D-020 | `best.pt` = most validation tracks completed, then highest average speed | active |
 
 ---
 
@@ -228,3 +230,30 @@ supersedes it — do not edit history.*
   size — acceptable for a handful of cars.
 * **Revisit when** training on dozens of car variants (then sample parameters
   per car inside one simulator).
+
+### D-019 — Segment-based track generator, mixed with the original
+
+* **Problem found (engineering log WP13).** After 1.6 billion decisions the
+  driver was within ~4 % of the physics reference on Mugello and Spa but never
+  completed Imola or Monza: it braked too late into the two heaviest braking
+  zones. The original generator almost never builds a long straight followed by
+  a slow corner or a real chicane.
+* **Options.** (a) Train on the real circuits — rejected, the driver would
+  memorise them and validation would be meaningless. (b) Tune the old
+  generator's smoothing. (c) A second generator that composes circuits from the
+  features real circuits are made of.
+* **Decision.** (c), `mv/track/segments.py`, used *together* with the old one
+  (`--preset mixed+gp`) so variety only grows.
+* **Why.** It controls exactly the statistics that matter (straight length
+  before a corner, corner radius, chicanes), and the same code at FS scale
+  (`fs_segments`) is the starting point for Formula Student tracks.
+
+### D-020 — How the "best" checkpoint is chosen
+
+* **Problem found.** The first rule (fraction of distance completed, then mean
+  lap time only if *all* tracks finished) selected the very first, cloned and
+  slow driver of the 3-hour run.
+* **Decision.** Score = number of validation tracks completed + mean speed over
+  the completed ones / 1000 km/h. Reliability first; among equally reliable
+  drivers, the faster one. Every validation also saves `eval_<update>.pt` so any
+  point of a run can be re-examined later.

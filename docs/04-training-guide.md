@@ -28,7 +28,9 @@ driver never trains on them.
 | `--name` | Folder under `runs/` | Use a new name per experiment |
 | `--envs` | Cars driving in parallel | 8 192–16 384 on this GPU. More cars = more decisions per second at almost no cost |
 | `--tracks` | Size of the pool of random circuits | 256–512. 10 % are replaced every 10 updates |
-| `--preset` | Track style: `mixed` (default), `circuit`, `fs` | Use `fs` for Formula Student-scale tracks |
+| `--preset` | Track generator(s): `mixed` (default), `circuit`, `gp`, `fs`, `fs_segments`; combine with `+` | **Recommended: `mixed+gp`** — `gp` adds long straights into slow corners and chicanes (engineering log WP13–14). FS scale: `fs+fs_segments` |
+| `--val-preset` | Generator for the random validation tracks | Keep it fixed between runs you want to compare |
+| `--init-from` | Start from an existing driver's weights | For fine-tuning on new tracks or a similar car |
 | `--hours` / `--steps` / `--iters` | When to stop | Any one of them |
 | `--eval-every` | Updates between validation runs | 100 ≈ every 5–8 minutes |
 | `--warm-start` | First imitate the rule-based driver | See engineering log WP7 for the measured effect |
@@ -72,8 +74,9 @@ trained on, standing start, two laps. It is the number that matters.
 `off at 940 m` = left the track 940 m into the run; `spun`, `stalled`, `slow`
 are the other ways to fail.
 
-`runs/<name>/best.pt` is the checkpoint with the best validation so far;
-`latest.pt` is the most recent.
+`runs/<name>/best.pt` is the checkpoint that completed the most validation
+tracks (ties: the faster one); `latest.pt` is the most recent; `eval_<update>.pt`
+is saved at every validation.
 
 Graphs: `.venv\Scripts\tensorboard.exe --logdir runs`, then open the address
 it prints. Raw numbers: `runs/<name>/log.csv`.

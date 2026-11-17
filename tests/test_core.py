@@ -326,3 +326,31 @@ def test_one_driver_can_train_on_several_cars():
     assert math.isfinite(out["value_loss"])
     env.tracks_replaced(torch.tensor([0, 1]))
     assert torch.isfinite(env.observe()).all()
+
+
+@pytest.mark.parametrize("preset", ["gp", "fs_segments"])
+def test_segment_tracks_are_closed_valid_and_have_braking_zones(preset):
+    from mv.track.segments import SEGMENT_PRESETS, segment_track
+    cfg = SEGMENT_PRESETS[preset]
+    rng = np.random.default_rng(5)
+    long_straights = 0
+    for _ in range(6):
+        t = segment_track(rng, preset)
+        assert t.min_radius() >= cfg.min_radius_m * 0.99
+        assert t.self_clearance() >= cfg.min_clearance_m
+        assert t.length <= cfg.max_length_m * 1.02
+        seg = np.linalg.norm(np.diff(np.vstack([t.xy, t.xy[:1]]), axis=0), axis=1)
+        assert np.allclose(seg, t.ds, rtol=0.05)            # closed: last point joins the first
+        straight = np.abs(t.kappa) < 1 / 800.0
+        run = best = 0
+        for s in np.concatenate([straight, straight]):
+            run = run + 1 if s else 0
+            best = max(best, run)
+        long_straights += min(best, t.n) * t.ds >= cfg.long_straight_m[0] * 0.8
+    assert long_straights >= 3, "most circuits should contain a long straight"
+
+
+def test_preset_mix_draws_from_both_generators():
+    ts = random_tracks(12, seed=4, cfg="mixed+gp")
+    kinds = {t.meta.get("generator") for t in ts}
+    assert "segments" in kinds and kinds & {"polygon", "spline"}

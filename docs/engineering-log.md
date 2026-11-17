@@ -442,23 +442,98 @@ process from Task Manager, then `--resume` later.
 | Straight after warm start (no PPO yet) | **9 of 10 validation tracks completed** |
 | Update 40 (39 M decisions) | pace 124.9 km/h, 13.7 crashes per 100 km (was 977 at update 1), ~96 000 decisions/s including learning |
 
-*Results of this run are to be appended here when it finishes (see next steps).*
+**Result (finished after 3 h: 3 000 updates, 1.59 billion decisions, ~145 000 decisions/s including learning).**
+
+Training fleet: pace 103 → 161 km/h along the track; crashes 977 → 3–6 per 100 km;
+exploration noise 0.25 → 0.03.
+
+Validation (deterministic driver, standing start, 2 laps; flying lap shown):
+
+| Track | Update 1 (cloned) | Update 1 000 | Update 2 000 | Update 3 000 | Physics reference | Gap at 3 000 |
+|---|---|---|---|---|---|---|
+| Mugello | 2:31.9 | off @ 785 m | 2:09.4 | **2:07.9** | 2:02.7 | **+4.3 %** |
+| Spa | 3:12.2 | off @ 414 m | 2:46.4 | **2:42.0** | 2:35.8 | **+4.0 %** |
+| Imola | 2:20.3 | off @ 1 388 m | off @ 3 364 m | off @ 3 364 m | 1:52.0 | — |
+| Monza | 2:23.1 | off @ 943 m | off @ 944 m | off @ 943 m | 1:57.9 | — |
+| 6 unseen random | 5/6 | 5/6 | 6/6 | 5/6 (one off at 298 m) | — | lap times 8–14 % faster than at update 1 |
+
+Reading:
+- Where it finishes, the driver is **within ~4 % of the physics reference** after
+  3 hours — the reference is itself 1–2 % optimistic (11.1), so the true gap is
+  smaller. It is 16–18 % faster than the rule-based driver on the same tracks.
+- **It never again completed Imola or Monza after update ~100.** It leaves the
+  track at the same metre every time: Monza 943 m (first chicane, braking from
+  245 km/h) and Imola 3 364 m. The speed trace
+  (`runs/eval_gt3rs_v1/…monza.png`) shows braking starting ~180 m before the
+  chicane at only ~1.1 g, while the car can brake at ~1.45 g. **Root cause
+  (hypothesis, strongly supported):** the random generator almost never builds
+  "long straight → tight chicane/corner", so the driver had nearly no practice
+  at braking from top speed into a slow corner (item 3.3). Fixed by WP14.
+- Validation results fluctuate between evaluations (one random track flips
+  between finished and off at ~300 m); the driver is near its limit there.
+- `best.pt` of this run is the update-1 checkpoint: the original selection
+  score rewarded completion only. Selection rule changed (D-020); every
+  validation now also saves `eval_<update>.pt`.
+
+## WP14 — Segment-based track generator ✅
+
+**Objective.** Close the gap found in WP13: circuits with long straights that
+end in slow corners, hairpins and real chicanes.
+
+**Approach.** `mv/track/segments.py`: draw a sequence of features (straights,
+corners, hairpins, chicanes; 30 % of features preceded by a 400–1 000 m
+"heavy braking" straight), scale the turning to exactly 360°, write the
+curvature with softened corner entries, then **close the loop exactly** by
+changing only straight lengths (bounded least squares: straights may grow, never
+shrink below a minimum). Presets `gp` (circuits) and `fs_segments` (FS scale:
+width 3–4.5 m, straights ≤ 78 m, hairpins ≥ 4.6 m radius, lap ≤ 600 m). Presets
+can be mixed: `--preset mixed+gp` picks one generator per circuit.
+
+**Verification.**
+
+| Check | Result |
+|---|---|
+| 40 `gp` circuits | 3.8 s; length 1.2–5.5 km; tightest corner median 16.5 m; longest straight median 749 m, corner after it median radius **27 m** |
+| 20 `fs_segments` circuits | 0.2 s; 307–578 m; longest straight median 65 m, corner after it median radius 6 m |
+| Closure, spacing, radius, self-clearance, braking zones | `test_segment_tracks_are_closed_valid_and_have_braking_zones` |
+| Picture | `docs/img/tracks_segments.png` |
+
+**Problems & resolutions**
+
+| # | Problem | Root cause | Resolution |
+|---|---|---|---|
+| 14.1 | No circuit closed (400/400 rejected) | Minimum-norm length correction needed negative straight lengths: a random lap misses its start by ~1.8 km | Bounded least squares (straights only lengthen, never below minimum) |
+| 14.2 | Closure needed many passes / laps of 9.7 km | Straight direction read at the straight's start, still bent by the corner exit; too many long straights | Direction read at the middle of each straight; feature count and long-straight lengths reduced; laps > 7.5 km rejected |
+
+## WP15 — Fine-tuning on the new circuits 🕓 (running)
+
+```
+scripts\train.py --vehicle ks_porsche_911_gt3_rs --name gt3rs_v2 --init-from runs\gt3rs_v1\latest.pt --preset mixed+gp --val-preset mixed --envs 16384 --tracks 512 --minibatches 8 --eval-every 100 --hours 2.5
+```
+
+Same validation set as WP13 (so results compare directly). Question under
+test: does practice on heavy braking zones fix Imola and Monza without losing
+Mugello/Spa pace? Output `runs/gt3rs_v2.log`, `runs/gt3rs_v2/`.
+
+*Results to be appended here.*
 
 ## Next steps (in order)
 
-1. **Evaluate the long run** when it finishes (WP13):
-   `scripts\evaluate.py --vehicle ks_porsche_911_gt3_rs --policy runs\gt3rs_v1\best.pt --scripted`
-   (prints the gap to the reference), then `--blind` and `--grip 0.88`. Append
-   the numbers to WP13. If validation lap times were still falling at the end,
-   continue with `--resume --hours N`.
+1. **Read the WP15 result** (`runs/gt3rs_v2.log`, validation blocks). If Imola
+   and Monza now complete, evaluate fully:
+   `scripts\evaluate.py --vehicle ks_porsche_911_gt3_rs --policy runs\gt3rs_v2\best.pt --scripted`,
+   then `--blind` and `--grip 0.88`; append to WP15. If not, look at the speed
+   trace at the failure point and log what it shows.
 2. **Lead review of `mv/planning`** (11.4) and a check of 11.1.
 3. **First in-game session** (needs the owner): `docs/07-assetto-corsa-bridge.md`
    checklist → `scripts/ac_bridge_check.py` → `scripts/ac_drive.py --scripted
-   --dry-run` → scripted driver with `--max-kmh 80` → trained driver.
+   --dry-run` → scripted driver with `--max-kmh 80` → trained driver
+   (`--policy runs\gt3rs_v2\best.pt`).
 4. **System identification** against AC telemetry and tuning of the importer
    (roadmap phase 2, step 4).
-5. Hyper-parameter study, one change at a time (7.3).
-6. Open items flagged ⚠️ above: 3.3 (generator shapes), 3.4 (flat tracks),
-   5.3/5.4 (tier-2 physics, trail-braking balance), 6.6 (track-limit rule),
-   8.2/8.3 (in-game verification), 10.2 (FS tracks).
-
+5. Hyper-parameter study, one change at a time (7.3). Candidates suggested by
+   WP13: exploration noise floor (0.03 reached by update ~2 000 — possibly too
+   little exploration to escape the late-braking habit), larger network.
+6. Open items flagged ⚠️ above: 3.4 (flat tracks), 5.3/5.4 (tier-2 physics,
+   trail-braking balance), 6.6 (track-limit rule), 8.2/8.3 (in-game
+   verification), 10.2 (FS cone tracks — `fs_segments` is the starting point).
