@@ -768,7 +768,7 @@ completes and validates.
 with ≥3 laps will show whether lap times fall from lap 2 to lap 3 — the direct
 measure of "better each lap".
 
-## WP22 — GitHub (private repository) 🕓 (ready; needs the owner once)
+## WP22 — GitHub (private repository) ✅ published 2026-11-17: https://github.com/raduedu/Project-MV
 
 The owner asked for the project to be kept on their GitHub as a private
 repository "Project MV". GitHub does not allow spaces, so it will be
@@ -778,3 +778,18 @@ done: `scripts/publish_github.ps1` checks for the CLI (prints the install
 command, installs nothing itself), logs in, refuses to publish if any Assetto
 Corsa data, runs or checkpoints are tracked, then creates the **private**
 repository and pushes (later runs: just pushes).
+
+**Done (2026-11-17, with the owner).** GitHub CLI 2.104.0 installed with winget
+(the owner approved the Windows administrator prompt); one-time device login
+approved by the owner (account `raduedu`, scope: repositories); repository
+created **private**. Verified on GitHub's side: visibility PRIVATE; remote
+`main` = local HEAD; 11/11 commits and 84/84 files; 0 Assetto Corsa files, runs
+or checkpoints.
+
+| # | Problem | Root cause | Resolution |
+|---|---|---|---|
+| 22.1 | First publish attempt stopped at "repository not found" | With `$ErrorActionPreference = "Stop"`, Windows PowerShell 5.1 turns a native program's error message into a fatal error — and "not found" is the expected answer the first time | `try/catch` around the existence and login checks |
+
+**Keeping it up to date:** commit, then
+`powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` (it
+pushes; the safety check runs every time).
