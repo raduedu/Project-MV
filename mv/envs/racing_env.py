@@ -22,8 +22,8 @@ car state               speed forward/sideways, yaw rate, accelerations,
                         peak grip, its own previous action
 position on track       lateral position between the edges, track width,
                         heading relative to the track direction
-track preview ("map")   curvature and width of the track at 23 distances
-                        ahead (2 m ... 340 m).  Can be cut short to mimic a
+track preview ("map")   tightest curvature and narrowest width of the track
+                        in 23 stretches ahead (up to 2 m, 2-5 m, ... 295-340 m).  Can be cut short to mimic a
                         first lap on an unknown track.
 lidar                   distance to the track edge along 19 rays fanned
                         over the front 180 degrees, up to 150 m
@@ -120,6 +120,20 @@ class RacingEnv:
         self.search_off = torch.arange(-3, fwd + 1, device=dev)
         self.look_m = torch.tensor(cfg.lookahead_m, device=dev)
         self.look_off = torch.round(self.look_m / ds).long()
+        # The preview reports, for each stretch of road between two preview distances,
+        # the TIGHTEST curvature in that stretch (and the narrowest width) - not the value
+        # at one point.  Point samples are 20-45 m apart far ahead, so a short, sharp
+        # corner (Monza's first chicane: ~15 m at 12 m radius) could fall between them and
+        # flicker in and out of view exactly where the braking decision is made
+        # (engineering log WP20).  Each stretch is scanned every ~1 m.
+        stride = max(int(round(1.0 / ds)), 1)
+        edges = [0.0] + list(cfg.lookahead_m)
+        bins = []
+        for a, b in zip(edges[:-1], edges[1:]):
+            lo, hi = int(round(a / ds)) + (1 if a > 0 else 0), int(round(b / ds))
+            bins.append(list(range(lo, hi + 1, stride)) or [hi])
+        width_bins = max(len(b) for b in bins)
+        self.bin_off = torch.tensor([b + [b[-1]] * (width_bins - len(b)) for b in bins], device=dev, dtype=torch.long)
         stride = max(int(round(cfg.lidar_stride_m / ds)), 1)
         n_back, n_fwd = int(cfg.lidar_back_m / (stride * ds)), int(cfg.lidar_range_m / (stride * ds)) + 1
         self.lidar_off = torch.arange(-n_back, n_fwd + 1, device=dev) * stride
@@ -343,10 +357,15 @@ class RacingEnv:
             (wr + lat - self.half_width) / 5.0,                 # room to the right edge
             torch.sin(self.head_err[ids]), torch.cos(self.head_err[ids]),
         ], 1)
-        widx = tr.wrap(tid, self.idx[ids][:, None] + self.look_off[None])
+        n = len(ids)
+        widx = tr.wrap(tid, (self.idx[ids][:, None, None] + self.bin_off[None]).reshape(n, -1)).reshape(n, *self.bin_off.shape)
+        k_all = tr.kappa[tid[:, None, None], widx]                                   # (n, bins, samples)
+        pick = k_all.abs().argmax(-1, keepdim=True)
+        k_peak = k_all.gather(-1, pick).squeeze(-1)                                  # signed tightest curvature
+        w_min = (tr.w_left[tid[:, None, None], widx] + tr.w_right[tid[:, None, None], widx]).amin(-1)
         seen = (self.look_m[None] <= self.horizon[ids][:, None]).float()
-        kappa = (tr.kappa[tid[:, None], widx] * 25.0).clamp(-3, 3) * seen
-        width = (tr.w_left[tid[:, None], widx] + tr.w_right[tid[:, None], widx]) / 15.0 * seen
+        kappa = (k_peak * 25.0).clamp(-3, 3) * seen
+        width = w_min / 15.0 * seen
         horizon = (self.horizon[ids] / self.look_m[-1]).clamp(max=1.0)[:, None]
         lidar = torch.sqrt(self._lidar(ids) / cfg.lidar_range_m)   # sqrt: finer resolution up close
         desc = self.car_desc[None].expand(len(ids), -1)

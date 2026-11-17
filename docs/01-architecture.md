@@ -101,7 +101,7 @@ SLAM.
 | car state | 13 | forward/sideways speed, yaw rate, long./lat. acceleration, steering angle, throttle, brake, gear, rpm, battery charge, front and rear slip angle ÷ slip angle of peak grip | IMU, wheel speeds, state estimator / game telemetry |
 | previous action | 2 | what it commanded last tick | itself |
 | position on track | 5 | lateral position between the edges, room to each edge, heading relative to track (sin, cos) | localisation against the track map |
-| track preview | 23 + 23 | curvature and width at 23 distances ahead, 2 m … 340 m | track map (after lap 1) — zeroed beyond the sensor horizon on a blind lap |
+| track preview | 23 + 23 | tightest curvature and narrowest width in each of 23 stretches ahead, up to 340 m | track map (after lap 1) — zeroed beyond the sensor horizon on a blind lap |
 | preview horizon | 1 | how far the preview is valid | 1.0 with a map, small on a first lap |
 | lidar | 19 | distance to the track edge along 19 rays over the front 180°, ≤ 150 m | lidar / cone detections / ray-cast on the map |
 | car descriptor | 12 | mass, power-to-weight, grip, downforce, drag, wheelbase, weight distribution, steering lock, driven axle, electric?, width, top speed | the vehicle file |

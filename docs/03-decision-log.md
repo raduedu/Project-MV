@@ -28,6 +28,7 @@ supersedes it — do not edit history.*
 | D-020 | `best.pt` = most validation tracks completed, then highest average speed | active |
 | D-021 | Memory = stacked recent car states, appended; transfer by zero-initialised new inputs | active, under test |
 | D-022 | Blind episodes cut the lidar range too | active |
+| D-023 | Track preview = tightest curvature / narrowest width per stretch, not point samples | active |
 
 ---
 
@@ -283,3 +284,17 @@ supersedes it — do not edit history.*
   150 m lidar, which still showed the road far ahead.
 * **Decision.** In blind episodes the lidar range equals the preview distance
   (25–60 m), close to what an FS car's cone perception gives.
+
+### D-023 — Preview by stretch, not by point
+
+* **Problem (engineering log WP20).** Point samples 20–45 m apart let short,
+  sharp corners fall between samples; the driver saw a chicane's radius flicker
+  between 10.6 and 23 m in its braking zone and failed there every lap.
+* **Decision.** Each of the 23 preview values reports the signed curvature of
+  largest magnitude, and the smallest width, within its stretch of road
+  (scanned every ~1 m).
+* **Why.** "How tight is the worst corner in this stretch" is what braking
+  depends on; it cannot alias. Same number of values, so the network and every
+  tool keep working.
+* **Evidence.** The previously trained driver completed Imola and Monza for the
+  first time with this change alone, without retraining.

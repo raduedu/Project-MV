@@ -528,7 +528,11 @@ noise is already at its floor (0.03), so the driver hardly tries braking
 earlier. Next experiment would be the same fine-tune with the noise reset to
 ~0.1 (`PPOConfig.min_std` / `log_std`), logged as a separate run.
 
-*Final results to be appended here.*
+**Final (stopped at update ~650 / 341 M decisions — question answered).**
+Imola and Monza still failed at the same metre in every validation; random
+circuits 6/6, Mugello 2:06.8, Spa 2:41.2. `gt3rs_v3_noise` (more exploration)
+was stopped at update ~500 with the same result. **Neither more track variety
+nor more exploration fixed it → the cause had to be elsewhere (WP20).**
 
 A second, parallel experiment tests the competing explanation (too little
 exploration): `gt3rs_v3_noise` — identical, but exploration noise reset to 0.12
@@ -677,3 +681,46 @@ Typical slice error: yaw rate 0.016 → 0.008 rad/s, lateral acceleration
 own driving at Imola and Monza (`ac_drive.py --dry-run --record`), then
 `sysid_fit.py`. Extend the factor set if the residuals show a pattern (e.g.
 roll-stiffness balance, tyre peak slip angle).
+
+## WP20 — Track-preview aliasing: the real cause of the Imola/Monza failures ✅
+
+**Finding.** A close trace of the Monza failure showed the driver braking hard
+and continuously from 813 m (≈ 1.2 g), yet arriving at the 12 m-radius
+chicane at 85 km/h where ~45–55 km/h is possible. It was not refusing to
+brake — it **could not reliably see the corner**.
+
+**Root cause.** The track preview sampled curvature at 23 *points*; far ahead
+the points are 20–45 m apart. Monza's first chicane is ~15 m long. Depending
+on where the points happened to fall, the radius the driver saw flickered
+between 10.6 m and 23 m (and at 700 m the chicane was missed entirely: "70 m")
+— exactly in the braking zone, where the decision is made. A corner at 23 m
+allows ~40 % more speed than one at 12 m.
+
+**Fix.** Each preview value now reports the **tightest curvature (and the
+narrowest width) anywhere in its stretch** of road, scanned every ~1 m.
+After the fix the preview shows the chicane steadily at its true 10.2 m from
+700 m onward. Cost: moderate (129 000 decisions/s with 16 384 cars measured
+while two other trainings shared the GPU).
+
+**Verification — the v2 driver with the corrected preview, no retraining:**
+
+| Track | Before | After (zero retraining) | Reference | Gap |
+|---|---|---|---|---|
+| Monza | off at 944 m, every time | **2:03.3** | 1:57.9 | +4.5 % |
+| Imola | off at 3 364 m, every time | **1:59.3** | 1:52.0 | +6.5 % |
+| Mugello | 2:07.9 | 2:09.4 | 2:02.7 | +5.5 % |
+| Spa | 2:42.0 | 2:45.0 | 2:35.8 | +5.9 % |
+
+All four real circuits completed for the first time since the cloned driver.
+Slightly more cautious on Mugello/Spa (it now sees tight corners it used to
+miss); fine-tuning should recover that.
+
+**Lesson.** Before blaming learning, check what the driver can *see*. Two
+experiments (v2, v3; ~3 GPU-hours) chased the wrong hypothesis; one trace of
+the failure plus one line of arithmetic found the cause.
+
+**Consequence.** The observation's *meaning* changed (not its size): drivers
+trained before this change still load and still drive, but should be
+fine-tuned. Running now: `gt3rs_v5_preview` (v2 + corrected preview only — the
+clean test of this fix) and `gt3rs_v4_memory` (corrected preview + memory +
+wider grip variation).
