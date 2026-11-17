@@ -28,6 +28,7 @@ docs/07-assetto-corsa-bridge.md).
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -169,7 +170,7 @@ class DriveResult:
 
 def drive(raw_env, driver, adapter: ObservationAdapter, vp: VehicleParams, laps: int = 1,
           max_time_s: float = 600.0, max_speed: float | None = None, dry_run: bool = False,
-          log_every_s: float = 1.0, printer=print) -> DriveResult:
+          log_every_s: float = 1.0, printer=print, record: list | None = None) -> DriveResult:
     """Drive the game car with ``driver`` (anything with ``act(obs, deterministic=True)``).
 
     ``raw_env`` is a :class:`mv.ac.bridge.ACRawEnv`.  With ``dry_run=True`` no
@@ -191,6 +192,8 @@ def drive(raw_env, driver, adapter: ObservationAdapter, vp: VehicleParams, laps:
     start_idx = None
     dist, vmax, off, ticks, reason = 0.0, 0.0, 0, 0, "time"
     next_log = 0.0
+    next_tick = None
+    ax_f = ay_f = None
     try:
         while ticks * dt < max_time_s:
             obs = adapter.update(tel, prev)
@@ -201,10 +204,25 @@ def drive(raw_env, driver, adapter: ObservationAdapter, vp: VehicleParams, laps:
             if max_speed is not None and tel.speed > max_speed:
                 thr, brk = 0.0, max(brk, 0.15)
             if dry_run:
+                # observe() returns at the next physics packet (~3 ms in AC); pace the loop
+                # to the driver's decision rate ourselves, as step() does when driving
                 act.sync(tel.steer, tel.throttle, tel.brake)
+                next_tick = (next_tick or time.perf_counter()) + dt
+                time.sleep(max(0.0, next_tick - time.perf_counter()))
                 tel = raw_env.session.observe(timeout_s=2.0)
             else:
                 tel = raw_env.step(steer, thr, brk)
+            if record is not None:
+                # what the car did and what it actually received, for system identification
+                # (mv/sysid).  Accelerations get the same 60 ms smoothing as the simulator's.
+                k = 1.0 - math.exp(-dt / 0.06)
+                ax_f = (ax_f if ax_f is not None else float(tel.acceleration_local[0]))
+                ay_f = (ay_f if ay_f is not None else float(tel.acceleration_local[1]))
+                ax_f += (float(tel.acceleration_local[0]) - ax_f) * k
+                ay_f += (float(tel.acceleration_local[1]) - ay_f) * k
+                record.append(dict(t=ticks * dt + dt, vx=float(tel.velocity_local[0]), vy=float(tel.velocity_local[1]),
+                                   r=float(tel.yaw_rate), ax=ax_f, ay=ay_f, steer=float(tel.steer),
+                                   throttle=float(tel.throttle), brake=float(tel.brake), gear=int(tel.gear)))
             prev = (action[0], action[1])
             ticks += 1
             dist += tel.speed * dt

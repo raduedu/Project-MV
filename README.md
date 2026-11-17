@@ -57,6 +57,7 @@ All commands below are run from the project root with `.venv\Scripts\python.exe`
 | Time a trained driver + plots | `scripts\evaluate.py --vehicle ks_porsche_911_gt3_rs --policy runs\gt3rs_v1\best.pt --scripted` |
 | Compute the physics reference lap | `scripts\reference_lap.py --vehicle ks_porsche_911_gt3_rs --track imola` |
 | Check the link to the running game | `scripts\ac_bridge_check.py` |
+| Tune a car to match the game (system identification) | record with `scripts\ac_drive.py ... --record x.npz`, then `scripts\sysid_fit.py --vehicle <car> x.npz` |
 | Drive in the game | `scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run` (then see its `--help`) |
 | Run the tests | `-m pytest tests -q` |
 

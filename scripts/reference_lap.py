@@ -121,8 +121,9 @@ def main() -> None:
 
     vp = load_vehicle(find_vehicle(args.vehicle))
     track = load_track(args)
-    print(f"{vp.name} on {track.name}: {track.length:.0f} m, width {2 * track.w_left.min():.1f}-"
-          f"{2 * track.w_left.max():.1f} m, {track.turning_direction()}")
+    width = track.w_left + track.w_right          # (imported tracks are not symmetric about the centre line)
+    print(f"{vp.name} on {track.name}: {track.length:.0f} m, width {width.min():.1f}-"
+          f"{width.max():.1f} m, {track.turning_direction()}")
 
     t0 = time.perf_counter()
     ggv = build_ggv(vp)

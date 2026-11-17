@@ -409,7 +409,8 @@ the centre line", 18 % off the reference.
 | 11.1 | The reference could not be *driven* in the simulator by a simple tracking controller (lost the car on corner entry: the reference trail-brakes with the rear axle at its limit) | ⚠️ open — the reference is probably 1–2 % optimistic on corner entry; treat "within 3 %" as the realistic target |
 | 11.2 | Direct lap-time optimisation of the line (L-BFGS on a spline) failed: track-edge clipping makes the objective noisy | Replaced by a curvature QP re-weighted by measured lap-time sensitivity (gain over minimum curvature: 0.7–2.3 %) |
 | 11.3 | Minimum-curvature QP diverged at Spa's La Source (track wider than the corner radius) | Line limited to 70 % of the local radius on the inside |
-| 11.4 | Lead review of `mv/planning` code | ⚠️ partly done. Integration checked: `scripts/evaluate.py` reads the reference files and prints the gap (rule-based driver +30.8 % at Imola, +22.3 % at Monza). Consistency cross-check against the independently trained RL driver (WP13): it never beats the reference (Mugello 2:07.9 vs 2:02.7, Spa 2:42.0 vs 2:35.8) but does beat the reference's *centre-line* time (2:07.9 vs 2:16.4), exactly as expected for a driver that uses a racing line. A line-by-line code review is still open |
+| 11.5 | Independent code review (Opus helper, 2026-11-17) | ✅ One bug fixed: at low speed the envelope ignored steering lock (it capped path curvature at 0.15 1/m instead of checking lock), so it allowed corners the car cannot steer — FS car skid-pad at 18 km/h: planner 1.36 g vs simulator 0.69 g (+98 %); after the fix 0.77 g. Road-car reference lap times unchanged (all corners above 48 km/h); FS references 0.02–0.58 % slower. All other checks agree with the simulator within ~0.5–1 % (skid-pad, 0–200, 200–0, shift model); stored laps reproduce to the millisecond. Verdict: road-car references 0.5–2 % optimistic; FS references ±1 %, unreliable below ~25 km/h (use `step_m=1.5` for FS tracks). 22 planning tests pass |
+| 11.4 | Lead review of `mv/planning` code | ⚠️ partly done (superseded by 11.5). Integration checked: `scripts/evaluate.py` reads the reference files and prints the gap (rule-based driver +30.8 % at Imola, +22.3 % at Monza). Consistency cross-check against the independently trained RL driver (WP13): it never beats the reference (Mugello 2:07.9 vs 2:02.7, Spa 2:42.0 vs 2:35.8) but does beat the reference's *centre-line* time (2:07.9 vs 2:16.4), exactly as expected for a driver that uses a racing line. A line-by-line code review is still open |
 
 ## WP12 — One driver for several cars ✅ (mechanism only; no multi-car driver trained yet)
 
@@ -625,3 +626,54 @@ Questions each run answers:
 6. Open items flagged ⚠️ above: 3.4 (flat tracks), 5.3/5.4 (tier-2 physics,
    trail-braking balance), 6.6 (track-limit rule), 8.2/8.3 (in-game
    verification), 10.2 (FS cone tracks — `fs_segments` is the starting point).
+
+## WP19 — System identification (simulator ↔ Assetto Corsa) ✅ (tested on synthetic data; no game data yet)
+
+**Objective.** Measure how closely the simulator reproduces Assetto Corsa and
+correct the vehicle file where it does not (roadmap phase 2, step 4) — built
+now so the first in-game session already produces useful data.
+
+**Approach.**
+- **Record** (`scripts/ac_drive.py --record file.npz`): every 40 ms tick, the
+  car's motion (vx, vy, yaw rate, accelerations smoothed like the simulator's)
+  and the inputs it actually received. Works in `--dry-run`, i.e. **recording
+  the owner's own laps**.
+- **Replay** (`mv/sysid/replay.py`): cut the recording into 1.5 s slices; start
+  the simulator in each slice's measured state and feed the recorded inputs
+  (mid-tick values); compare. Restarting every slice keeps small errors from
+  compounding. All slices run as one batch (~0.5 s per evaluation on the CPU).
+- **Fit** (`scripts/sysid_fit.py`): six correction factors — overall grip,
+  front/rear grip balance, downforce, drag, power, brakes — by a global search
+  (differential evolution) followed by a coordinate polish. Afterwards each
+  factor's **confidence** is measured (does ±5 % clearly worsen the match?);
+  only well-determined factors are written to `vehicles/local/<car>_tuned.yaml`.
+
+**Verification (self-test, `sysid_fit.py --synthetic`: a deliberately altered
+911 recorded in the simulator, fit from the unaltered file).**
+
+| Factor | Found | True | Determined? |
+|---|---|---|---|
+| Overall grip | 0.959 | 0.960 | yes |
+| Grip balance | 1.100 | 1.087 | yes |
+| Power | 0.985 | 1.000 | yes |
+| Brakes | 0.913 | 0.900 | yes |
+| Downforce | 1.373 | 1.000 | **no** → not applied |
+| Drag | 0.886 | 1.000 | **no** → not applied |
+
+Typical slice error: yaw rate 0.016 → 0.008 rad/s, lateral acceleration
+0.34 → 0.15 m/s². Fast unit tests: `tests/test_sysid.py`.
+
+**Problems & resolutions** (in the order they appeared)
+
+| # | Problem | Root cause | Resolution |
+|---|---|---|---|
+| 19.1 | Even with the true parameters the replay missed by ±0.3 m/s² | A recorded spin dominated the error, and inputs were replayed half a tick late | Cauchy-type robust error per slice; inputs replayed at mid-tick (average of both samples) — error floor halved |
+| 19.2 | Nelder-Mead stalled near the start | SciPy's default initial step for a zero start is 0.025 %, on a slightly jagged surface (gear shifts) | Replaced (see 19.3) |
+| 19.3 | Robust least squares and coordinate search landed in wrong valleys | Factors partly stand in for each other: more front grip ≈ less rear grip (balance); less grip ≈ less downforce | Grip re-expressed as *level* and *balance*; global search (differential evolution) before polishing. 1-D scans had confirmed every factor has a clear minimum at the true value |
+| 19.4 | Aero factors not recovered | The cautious recording driver rarely goes fast; downforce/drag barely affect the data | Accepted and made visible: confidence check, undetermined factors are not applied. To identify aero: record fast laps (high-speed corners, long straights) |
+| 19.5 | **Dry-run mode in the game would have run at ~300 Hz instead of 25 Hz** (found while adding recording) | `session.observe()` returns at the next physics packet (~3 ms) | `drive()` paces dry-run ticks itself |
+
+**Next.** First real use: in the first in-game session, record 3 laps of your
+own driving at Imola and Monza (`ac_drive.py --dry-run --record`), then
+`sysid_fit.py`. Extend the factor set if the residuals show a pattern (e.g.
+roll-stiffness balance, tyre peak slip angle).

@@ -33,7 +33,8 @@ but solve it for a *steady state* instead of integrating it in time:
 4. The sideways force the front and the rear axle must deliver follows from
    ``m * ay`` and the requirement that the car does not start to spin (zero
    yaw moment).  If either axle needs more than it can deliver at the slip
-   angle of peak grip, this (v, ay, u) is not achievable.
+   angle of peak grip, or the front wheels would have to turn further than
+   full steering lock, this (v, ay, u) is not achievable.
 5. Sum the forces along the direction of travel -> a new ``ax``.  Repeat 2-5
    until ``ax`` stops changing (a fixed-point iteration: the loads depend on
    the acceleration and the acceleration depends on the loads).
@@ -58,8 +59,12 @@ Deliberate simplifications (see docs/08-reference-lap.md for their effect)
 Validation against the simulator (see tests/test_planning.py and the doc):
 one simulator step started from the predicted steady state reproduces the
 predicted acceleration within ~0.05 m/s^2 with ~zero yaw acceleration; the
-steady cornering limit agrees with a simulated skid-pad within 0.3 %;
-0-200 km/h and 200-0 km/h agree within 1-2 %.
+steady cornering limit agrees with a simulated skid-pad within 0.5 %;
+0-200 km/h and 200-0 km/h agree within 1-2 %.  Exception: very low speed in
+very tight corners (FS hairpins below ~25 km/h).  There the two wheels of an
+axle run at clearly different slip angles (yaw rate x half track is 10-20 %
+of the speed) and the small-angle axle kinematics above are no longer exact;
+the envelope is then off by up to about +-10 % (see docs/08, section 4).
 """
 
 from __future__ import annotations
@@ -80,7 +85,12 @@ _SLOPE_FLOOR = 0.15          # see QuasiSteadyCar.solve (damped Newton step for 
 # Damping of the fixed-point iteration: bold first steps, cautious later ones (operating points
 # right at the grip limit react very strongly to small changes and need the small steps).
 _RELAX = tuple(max(0.9 * 0.95 ** k, 0.15) for k in range(200))
-_KAPPA_MAX = 0.15            # tightest path curvature considered (1/m); only matters below ~30 km/h
+# Review fix: there used to be a fixed cap ``_KAPPA_MAX = 0.15`` on the path curvature used for
+# the steering geometry.  It silently replaced the true curvature ay / v^2 below ~9 m/s (FS
+# hairpins!), so steering angle, body slip and "cornering drag" were those of a much wider
+# corner, and the steering lock was never checked: at 18-25 km/h the FS car's envelope was
+# 7-98 % above what the simulator (whose steering is clamped at full lock) can hold.  The true
+# curvature is now used and a point that needs more than full lock is infeasible (see solve).
 
 
 def _pacejka_bc(peak_slip_deg: float, falloff: float) -> tuple[float, float]:
@@ -297,6 +307,11 @@ class QuasiSteadyCar:
         self.tire_bn = np.tan(np.pi / (2.0 * self.tire_c))          # stiffness for slip normalised to 1 at the peak
         self.tan_peak_f = math.tan(math.radians(tf.peak_slip_angle_deg))
         self.tan_peak_r = math.tan(math.radians(tr.peak_slip_angle_deg))
+        # Steering lock (the simulator clamps the road-wheel angle at this value).  Path curvature
+        # is capped at twice the kinematic full-lock curvature only to keep the trigonometry sane
+        # at the v ~ 0 grid rows; any point that hits the cap is declared infeasible in solve().
+        self.steer_max = math.radians(vp.steering.max_wheel_angle_deg)
+        self.kappa_cap = 2.0 * math.tan(min(self.steer_max, 1.2)) / c.wheelbase_m
 
     # ------------------------------------------------------------------------
     def tyre_loads(self, v, ax, ay) -> np.ndarray:
@@ -323,9 +338,10 @@ class QuasiSteadyCar:
         ``ax``        acceleration along the direction of travel (m/s^2);
         ``util``      the larger of the two axles' lateral utilisation: the side
                       force the axle must deliver divided by what it could
-                      deliver at the largest allowed slip angle.  The operating
-                      point is achievable iff ``util <= 1``;
-        ``util_front``, ``util_rear``, ``fz``, ``fx``, ``fy``, ``slip_front``,
+                      deliver at the largest allowed slip angle, or the
+                      steering angle needed divided by full lock if that is
+                      larger.  The operating point is achievable iff ``util <= 1``;
+        ``util_front``, ``util_rear``, ``util_steer``, ``fz``, ``fx``, ``fy``, ``slip_front``,
         ``slip_rear`` (slip angles, rad), ``beta`` (body slip angle), ``steer``
         (road-wheel angle), ``ax_body``, ``ay_body`` and ``residual`` (size of
         the last update, in m/s^2: a convergence check).
@@ -349,7 +365,8 @@ class QuasiSteadyCar:
         fx_pedal = np.stack([f_front, f_front, f_rear, f_rear], axis=-1) * 0.5 - brk[..., None] * self.brake_force
         fz_fixed = self.fz_static + self.aero_fz * (v * v)[..., None]
         drag = self.drag_k * v * v
-        kappa = np.minimum(ay / np.maximum(v, 1.0) ** 2, _KAPPA_MAX)       # path curvature
+        kappa_true = ay / np.maximum(v, 1.0) ** 2                           # path curvature
+        kappa = np.minimum(kappa_true, self.kappa_cap)
         m, a, b, wb, cap = self.mass, self.a, self.b, self.wheelbase, self.slip_cap
         ax_b = np.zeros(v.shape)                    # acceleration along the body x axis (iterated)
         an_f, an_r = np.zeros(v.shape), np.zeros(v.shape)     # normalised axle slips alpha_n (iterated)
@@ -412,7 +429,11 @@ class QuasiSteadyCar:
             if residual.size == 0 or residual.max() < tol:
                 break
         ax_path = ax_b * cos_b + ay_b * sin_b       # rate of change of speed
-        return dict(ax=ax_path, util=np.maximum(np.abs(util_f), np.abs(util_r)), util_front=util_f, util_rear=util_r,
+        # steering lock: needing more road-wheel angle than full lock is as infeasible as needing
+        # more side force than the tyres have (review fix, see the module-level note on the old curvature cap)
+        util_steer = np.where(kappa_true > self.kappa_cap, np.inf, np.abs(steer) / self.steer_max)
+        util = np.maximum(np.maximum(np.abs(util_f), np.abs(util_r)), util_steer)
+        return dict(ax=ax_path, util=util, util_front=util_f, util_rear=util_r, util_steer=util_steer,
                     fz=fz, fx=fx, fy=fy, slip_front=slip_f, slip_rear=slip_r, beta=beta, steer=steer,
                     ax_body=ax_b, ay_body=ay_b, residual=residual)
 
@@ -491,6 +512,13 @@ class GGV:
         would use up grip on the driven axle.  A car circling at steady speed
         therefore corners a few per cent below ``ay_max``; this is the number a
         skid-pad test measures.
+
+        Caveat (review): "can hold" is read off the tables as ``ax_min <= 0 <=
+        ax_max``, i.e. it assumes every acceleration in between is reachable
+        with one constant pedal.  With traction control on a driven axle that
+        is not always true (FS car at 72 km/h: low throttle and full throttle
+        are feasible, the throttle that gives exactly ax = 0 is not), and this
+        number is then ~2 % too high.  Reporting only - lap times do not use it.
         """
         can_hold = (self.ax_max >= 0.0) & (self.ax_min <= 0.0)                 # (Nv, Nt)
         last = len(self.theta) - 1 - np.argmax(can_hold[:, ::-1], axis=1)       # last angle that can hold speed

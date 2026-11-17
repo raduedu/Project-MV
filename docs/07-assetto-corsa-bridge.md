@@ -369,3 +369,18 @@ Verified from documentation / the install / tests:
 * Collision detection without the app misses light contacts (damage 0 %, < 5 g).
 * Online servers: overrides/resets are restricted or disabled; offline only.
 * Windows only (named mappings, `c_wchar` = 2 bytes).
+
+
+## Recording laps for system identification
+
+Once the bridge check passes, record a few laps — ideally your own, driven
+fast — so the simulator can be tuned to the game (engineering log WP19):
+
+```powershell
+.venv\Scripts\python.exe scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run --laps 3 --record runs\sysid\imola_me.npz
+.venv\Scripts\python.exe scripts\sysid_fit.py --vehicle ks_porsche_911_gt3_rs runs\sysid\imola_me.npz
+```
+
+In `--dry-run` nothing is sent to the car: you drive, the script records (and
+prints what the rule-based driver *would* do, which doubles as the dry-run
+check).

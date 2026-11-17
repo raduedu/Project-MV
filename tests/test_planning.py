@@ -54,7 +54,8 @@ def circle_track(radius: float, half_width: float = 5.0) -> Track:
 # g-g-v envelope
 # --------------------------------------------------------------------------
 def test_ggv_shape_and_signs(ggv):
-    assert np.all(ggv.ay_max > 0.8 * G) and np.all(ggv.ay_max < 3.0 * G)
+    grip_limited = ggv.v >= 10.0              # below ~8 m/s the steering lock, not grip, limits ay
+    assert np.all(ggv.ay_max[grip_limited] > 0.8 * G) and np.all(ggv.ay_max < 3.0 * G)
     assert np.all(ggv.ax_min <= ggv.ax_max + 1e-9)
     assert np.all(ggv.ax_min[:, 0] < -0.9 * G)                  # straight-line braking beats 0.9 g everywhere
     assert ggv.ax_max[5, 0] > 0.5 * G                           # and it accelerates hard at low speed
@@ -137,6 +138,52 @@ def test_force_balance_matches_one_simulator_step(vp, kmh, pedal, frac):
     yaw_acc = (float(sim.r) - r0) / sim.dt
     assert abs(ax_sim - float(res["ax"])) < 0.15, f"ax: planner {float(res['ax']):.3f}, simulator {ax_sim:.3f}"
     assert abs(yaw_acc) < 0.15, f"yaw acceleration {yaw_acc:.3f} rad/s^2 (should be ~0)"
+
+
+@pytest.fixture(scope="module")
+def vp_fs():
+    return load_vehicle(find_vehicle("fs_generic_ev"))       # short wheelbase, 26 deg lock, no ABS
+
+
+def test_low_speed_envelope_respects_steering_lock(vp_fs):
+    """Regression (review): the path curvature used for the steering geometry was capped at
+    0.15 1/m and the steering lock was never checked, so below ~9 m/s the envelope allowed
+    corners tighter than the car can steer (FS car at 5 m/s: radius 1.8 m with 26 deg lock)."""
+    car = QuasiSteadyCar(vp_fs)
+    pedal = np.linspace(-0.3, 0.6, 19)
+    v = np.array([4.0, 5.0, 6.0])
+    ay_all = car.max_lateral(v[:, None], pedal[None, :])
+    best = ay_all.argmax(1)
+    ay = ay_all[np.arange(len(v)), best]
+    lock = math.radians(vp_fs.steering.max_wheel_angle_deg)
+    kappa_lock = math.tan(lock) / vp_fs.chassis.wheelbase_m        # kinematic full-lock curvature
+    assert np.all(ay / v ** 2 < 1.3 * kappa_lock)                    # (slip angles allow a little more)
+    res = car.solve(v, ay, pedal[best], n_iter=300)
+    assert np.all(np.abs(res["steer"]) <= lock * (1 + 1e-6))
+
+
+def test_low_speed_corner_matches_one_simulator_step(vp_fs):
+    """Regression (review): at 8 m/s on the FS car the old curvature cap put the planner in a
+    state the simulator does not hold (lateral acceleration 10-17 % lower, yaw acceleration
+    ~5 rad/s^2).  With the true path curvature the one-step check agrees again."""
+    car = QuasiSteadyCar(vp_fs)
+    v = 8.0
+    for pedal in (0.1, -0.3):
+        ay = 0.95 * float(car.max_lateral(np.array(v), np.array(pedal)))
+        res = car.solve(v, ay, pedal, n_iter=300)
+        beta, steer = float(res["beta"]), float(res["steer"])
+        sim = VehicleSim(vp_fs, 1, "cpu")
+        zero = torch.zeros(1)
+        sim.reset(torch.arange(1), zero, zero, zero, torch.tensor([v * math.cos(beta)]))
+        sim.vy[:], sim.r[:] = v * math.sin(beta), ay / v
+        sim.steer[:], sim.thr[:], sim.brk[:] = steer, max(pedal, 0.0), max(-pedal, 0.0)
+        sim.ax[:], sim.ay[:] = float(res["ax_body"]), float(res["ay_body"])
+        r0 = float(sim.r)
+        sim.step(torch.tensor([steer / sim.steer_max]), torch.tensor([max(pedal, 0.0)]), torch.tensor([max(-pedal, 0.0)]))
+        beta1 = math.atan2(float(sim.vy), float(sim.vx))
+        ay_sim = v * (r0 + (beta1 - beta) / sim.dt)                  # centripetal acceleration of the path
+        assert abs(ay_sim / ay - 1.0) < 0.03, f"pedal {pedal}: ay planner {ay:.2f}, simulator {ay_sim:.2f}"
+        assert abs(float(sim.r) - r0) / sim.dt < 1.0
 
 
 # --------------------------------------------------------------------------

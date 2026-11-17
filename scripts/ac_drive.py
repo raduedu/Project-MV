@@ -64,6 +64,9 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="send no controls; just show what the driver would do")
     ap.add_argument("--blind", action="store_true", help="short track preview (first-lap mode)")
     ap.add_argument("--backend", default="csp", help="csp (default), vjoy or vgamepad")
+    ap.add_argument("--record", type=Path, default=None,
+                    help="save telemetry + inputs to this .npz for system identification (scripts/sysid_fit.py). "
+                         "Works in --dry-run too: record YOUR OWN laps")
     ap.add_argument("--ac-root", default=None)
     args = ap.parse_args()
 
@@ -86,11 +89,23 @@ def main() -> None:
         tel = raw.session.observe(timeout_s=10.0)
         if tel.car_model and vp.name.startswith("ks_") and tel.car_model != vp.name:
             print(f"warning: the game reports car '{tel.car_model}' but the vehicle file is '{vp.name}'")
+        rows: list | None = [] if args.record else None
         try:
             res = drive(raw, driver, adapter, vp, laps=args.laps, max_time_s=args.max_time,
-                        max_speed=None if args.max_kmh is None else args.max_kmh / 3.6, dry_run=args.dry_run)
+                        max_speed=None if args.max_kmh is None else args.max_kmh / 3.6, dry_run=args.dry_run,
+                        record=rows)
         except KeyboardInterrupt:
             print("stopped by user")
+            res = None
+        finally:
+            if rows:
+                from mv.sysid.replay import Recording
+                Recording.from_rows(rows, meta={"source": "assetto_corsa", "car": vp.name, "track": track.name,
+                                                "driver": "human" if args.dry_run else ("scripted" if args.scripted
+                                                                                       else str(args.policy))}
+                                    ).save(args.record)
+                print(f"recorded {len(rows)} ticks -> {args.record}")
+        if res is None:
             return
         print(f"\nfinished: {res.reason}; laps {[round(t, 3) for t in res.laps]}; {res.distance_m:.0f} m; "
               f"top speed {res.max_speed * 3.6:.0f} km/h; ticks over the track edge: {res.off_track_ticks}")

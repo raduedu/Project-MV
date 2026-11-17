@@ -76,12 +76,12 @@ has never seen, close to the physical limit, without leaving the track.
    the car in the game?
 3. **Rule-based driver in the game**, speed-capped, then uncapped. This proves
    telemetry → observation → action → control end to end with no learning.
-4. **System identification**: record AC telemetry for standard manoeuvres
-   (full-throttle run, full braking, steady circles at several speeds, step
-   steer) and compare with `scripts/vehicle_check.py`. Tune the reduction rules
-   in `mv/ac/car_import.py` (tyre grip, load sensitivity, aero map, roll
-   stiffness split, brake torque) until the simulator matches within a few
-   percent. Automate as `scripts/ac_sysid.py`.
+4. **System identification** *(tool built: `ac_drive.py --record`,
+   `scripts/sysid_fit.py`, engineering log WP19)*: record laps in AC — your own
+   in dry-run mode, the faster the better — fit the correction factors, check
+   the tuned car with `vehicle_check.py`, fine-tune the driver on it. If the
+   same corrections appear for every car, fix the reduction rules in
+   `mv/ac/car_import.py` instead.
 5. **Learned driver in the game**, zero-shot. Expect it to be drivable but not
    optimal (elevation, kerbs, tyre temperature are not in tier 1).
 6. **Fine-tuning in the game**: continue learning from real-time AC experience.
