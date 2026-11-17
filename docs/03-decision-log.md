@@ -26,6 +26,8 @@ supersedes it — do not edit history.*
 | D-018 | Multi-car training = several single-car environments behind one interface | active |
 | D-019 | Second track generator built from straights/corners/chicanes, mixed with the first | active |
 | D-020 | `best.pt` = most validation tracks completed, then highest average speed | active |
+| D-021 | Memory = stacked recent car states, appended; transfer by zero-initialised new inputs | active, under test |
+| D-022 | Blind episodes cut the lidar range too | active |
 
 ---
 
@@ -257,3 +259,27 @@ supersedes it — do not edit history.*
   the completed ones / 1000 km/h. Reliability first; among equally reliable
   drivers, the faster one. Every validation also saves `eval_<update>.pt` so any
   point of a run can be re-examined later.
+
+### D-021 — Memory by stacking recent states
+
+* **Problem (engineering log WP16).** The driver completed 1/6 tracks at grip
+  ×0.88 although training varied grip that much: from a single instant it
+  cannot tell how much grip there is.
+* **Options.** (a) Recurrent network (LSTM/GRU). (b) Stack the last N samples
+  of the car state and actions into the observation. (c) Give the true grip as
+  an input (privileged — rejected, a real car cannot measure it).
+* **Decision.** (b) first: 8 samples, 0.12 s apart.
+* **Why.** Works with the existing PPO and network unchanged; ~1 s is enough
+  to see how the car responded to the last inputs (yaw rate vs steering, speed
+  lost under braking). A recurrent network is the step after, if lap-to-lap
+  learning needs longer memory.
+* **Transfer.** New inputs are appended at the end and their first-layer
+  weights start at zero, so training continues from an existing driver instead
+  of from scratch (verified: identical outputs at the start).
+
+### D-022 — Blind means blind
+
+* **Problem (WP16).** "Blind" episodes cut the track preview but kept the
+  150 m lidar, which still showed the road far ahead.
+* **Decision.** In blind episodes the lidar range equals the preview distance
+  (25–60 m), close to what an FS car's cone perception gives.

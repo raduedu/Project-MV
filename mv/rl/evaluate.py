@@ -81,7 +81,7 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
     env.reset(torch.arange(env.n, device=env.device))
     env.sim.grip[:] = grip
     if blind:
-        env.horizon[:] = 40.0
+        env.set_view(40.0)
     n = env.n
     active = torch.ones(n, dtype=torch.bool, device=env.device)
     lap_times: list[list[float]] = [[] for _ in range(n)]
@@ -122,7 +122,7 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
             active[i] = False
             reason[i] = "slow"
         if blind:
-            env.horizon[:] = 40.0
+            env.set_view(40.0)
         env.sim.grip[:] = grip
         if not active.any():
             break

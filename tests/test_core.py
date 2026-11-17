@@ -354,3 +354,33 @@ def test_preset_mix_draws_from_both_generators():
     ts = random_tracks(12, seed=4, cfg="mixed+gp")
     kinds = {t.meta.get("generator") for t in ts}
     assert "segments" in kinds and kinds & {"polygon", "spline"}
+
+
+def test_blind_view_limits_preview_and_lidar(car):
+    env = make_env(car, circle_track(300.0, 6.0))
+    env.set_view(30.0)
+    obs = env.observe()[0]
+    lidar_m = (obs[env.obs_layout["lidar"]] ** 2) * env.cfg.lidar_range_m       # undo the sqrt scaling
+    assert float(lidar_m.max()) <= 30.0 + 1e-3
+    far = torch.tensor(env.cfg.lookahead_m) > 30.0
+    assert (obs[env.obs_layout["kappa"]][far] == 0).all()
+    env.set_view(None)
+    assert float(((env.observe()[0][env.obs_layout["lidar"]] ** 2) * env.cfg.lidar_range_m).max()) > 30.0
+
+
+def test_memory_holds_past_car_states(car):
+    cfg = quiet_config(history_steps=4, history_every=2)
+    env = RacingEnv(car, TrackBatch([circle_track()]), 1, cfg, device="cpu")
+    env.fixed_start = (0, 0.0)
+    env.reset(torch.arange(1))
+    lay = env.obs_layout
+    assert lay["history"].stop == env.num_obs and lay["history"].stop - lay["history"].start == 4 * 15
+    cores = []
+    for i in range(12):
+        cores.append(env._core(torch.arange(1))[0].clone())     # state before this decision's physics...
+        obs, *_ = env.step(torch.tensor([[0.0, 1.0]]))
+    cores.append(env._core(torch.arange(1))[0].clone())         # ...and the current one
+    hist = obs[0, lay["history"]].reshape(4, 15)
+    # sample j (1-based) is the state j*every decisions before the current one
+    for j in range(1, 5):
+        assert torch.allclose(hist[j - 1], cores[-1 - 2 * j].clamp(-5, 5), atol=1e-5)

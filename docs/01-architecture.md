@@ -105,6 +105,7 @@ SLAM.
 | preview horizon | 1 | how far the preview is valid | 1.0 with a map, small on a first lap |
 | lidar | 19 | distance to the track edge along 19 rays over the front 180°, ≤ 150 m | lidar / cone detections / ray-cast on the map |
 | car descriptor | 12 | mass, power-to-weight, grip, downforce, drag, wheelbase, weight distribution, steering lock, driven axle, electric?, width, top speed | the vehicle file |
+| memory (optional) | 15 × N | the car-state block and previous action at N earlier moments (`history_steps`, `history_every`) | the driver's own recent past |
 
 Design rules for this contract:
 

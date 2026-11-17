@@ -529,6 +529,82 @@ earlier. Next experiment would be the same fine-tune with the noise reset to
 
 *Final results to be appended here.*
 
+A second, parallel experiment tests the competing explanation (too little
+exploration): `gt3rs_v3_noise` — identical, but exploration noise reset to 0.12
+with a floor of 0.06 (`--reset-noise 0.12 --min-noise 0.06`). Running two
+trainings at once works: with one run the GPU was only ~40 % busy (the loop is
+limited by Python overhead), with two it is ~100 % busy and the first run kept
+its ~120 000 decisions/s.
+
+## WP16 — Robustness of the 3-hour driver ⚠️ (important findings)
+
+`runs/gt3rs_v1/latest.pt`, Mugello + Spa + 4 unseen random circuits, 2 laps:
+
+| Condition | Completed | Notes |
+|---|---|---|
+| Normal | 5/6 | Mugello +4.2 %, Spa +4.0 % vs reference; one short random circuit off at 598 m |
+| Blind: track preview cut to 40 m (lidar unchanged, 150 m) | 3/6 | still ~220 km/h where it can only see 40 m — it has not learned "slower when you cannot see" |
+| Grip × 0.88, driver not told | **1/6** | drives at the limit of *nominal* grip; cannot notice the car responding less |
+| Track-edge use (decisions with any body part over the edge, per run) | 59–99 on 4 of 5 completed tracks | the driver uses the edge routinely; the penalty is too weak relative to the time gained |
+
+Reading:
+1. **Grip:** training already randomised grip between ×0.88 and ×1.05, yet
+   the driver learned to drive the *average*. With only the present instant to
+   look at, it has no way to tell a slippery day from a normal one. Fix: give
+   it a short memory of how the car responded (WP17) — this is also the basis
+   for "better lap after lap".
+2. **Blind laps:** the "blind" training episodes cut the preview but left the
+   150 m lidar, which still shows the road far ahead — so blind training was
+   never really blind, while a real FS car perceives cones to ~20–25 m. Fix
+   planned: cut the lidar range together with the preview in blind episodes.
+3. **Edge use:** acceptable for Assetto Corsa (kerbs), not for Formula Student
+   (cones). Make the edge penalty a per-target setting (open item 6.6).
+
+## WP17 — Memory and truly blind laps ✅ (built and tested; training run queued)
+
+**Approach.**
+- **Memory** (`EnvConfig.history_steps`, `train.py --history N`): the driver
+  also receives the car-state block and its own actions at N earlier moments,
+  `history_every` decisions apart (default 3 → 0.12 s; N = 8 covers ~1 s). Off
+  by default so existing drivers keep working. Appended at the *end* of the
+  observation.
+- **Starting a memory driver from an existing one** (`--init-from` with a
+  larger observation): the first layer gets zero weights for the new inputs,
+  so the new driver initially drives *exactly* like the old one and learns to
+  use the memory from there. Measured: identical actions and values (difference 0.0).
+- **Truly blind episodes** (`EnvConfig.blind_lidar`, default on): when the
+  preview is cut to h metres, the lidar range is cut to h as well.
+  `env.set_view(h)` does both (used by `evaluate.py --blind` and the in-game
+  adapter). Note: `--blind` results from before this change are not
+  comparable with later ones.
+- `train.py --grip-range LOW HIGH` widens the hidden grip variation so that
+  sensing grip pays off.
+
+**Verification.** `test_memory_holds_past_car_states` (sample *j* equals the
+state *j·every* decisions earlier), `test_blind_view_limits_preview_and_lidar`,
+and the in-game adapter reproduces training observations with memory on
+(`test_adapter_reproduces_training_observation[...-memory]`). All tests pass.
+
+## WP18 — Unattended training queue 🕓
+
+`scripts/queue_runs.py <queue.json>` runs training jobs one after another,
+optionally after a given process has ended. Two lanes run in parallel on the
+one GPU (see WP15 note on GPU use):
+
+| Lane | Now | Then | Then |
+|---|---|---|---|
+| 1 (`runs/queue_lane1.json`) | `gt3rs_v2` (fine-tune on mixed+gp) | `gt3rs_v4_memory`: from v2, `--history 8 --grip-range 0.82 1.08 --reset-noise 0.1`, 2.5 h | `multi_v1`: one driver for 911 + 918 + Taycan, from v2, 3 h |
+| 2 (`runs/queue_lane2.json`) | `gt3rs_v3_noise` (same as v2, more exploration) | `fs_v1`: generic FS car on `fs+fs_segments` tracks, warm start, 2.5 h | — |
+
+Queue progress: `runs/queue_lane*.queue.log`; each job's screen output:
+`runs/<name>.log`.
+
+Questions each run answers:
+- v2 vs v3: is the Imola/Monza failure fixed by the new tracks alone, or does it need more exploration?
+- v4: does memory + wider grip variation make the driver robust to an unknown grip level (WP16: 1/6 at grip ×0.88)?
+- multi_v1: can one network drive a combustion, a hybrid and an electric car?
+- fs_v1: first driver at Formula Student scale.
+
 ## Next steps (in order)
 
 1. **Read the WP15 result** (`runs/gt3rs_v2.log`, validation blocks). If Imola

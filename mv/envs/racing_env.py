@@ -69,6 +69,13 @@ class EnvConfig:
     lidar_back_m: float = 15.0
     blind_prob: float = 0.3                      # share of episodes driven with a short track preview ("first lap")
     blind_horizon_m: tuple[float, float] = (25.0, 60.0)
+    blind_lidar: bool = True                     # blind episodes also cut the lidar range to the preview distance
+    # --- memory: recent history of the car's own state and actions (0 = off) ---
+    # Lets the driver infer what it cannot measure directly (grip, its car's response)
+    # from how the car reacted over the last moments.  Changes the observation size:
+    # a driver trained with one setting cannot be used with another.
+    history_steps: int = 0                       # number of past samples
+    history_every: int = 3                       # decisions between samples (3 x 0.04 s = 0.12 s)
     # --- reward ---
     progress_scale: float = 0.25                 # reward per metre of progress along the centre line
     edge_penalty: float = 0.5                    # per step, per metre the body hangs over the track edge
@@ -131,6 +138,11 @@ class RacingEnv:
         self.w_left, self.w_right = z(), z()
         self.s_total, self.t_ep, self.stall_t = z(), z(), z()
         self.horizon = torch.full((num_envs,), 1e6, device=dev)
+        self.lidar_range = torch.full((num_envs,), float(cfg.lidar_range_m), device=dev)
+        self.hist_len = cfg.history_steps * cfg.history_every + 1 if cfg.history_steps > 0 else 0
+        self.hist = torch.zeros(num_envs, max(self.hist_len, 1), 15, device=dev)
+        self.hist_idx = torch.tensor([self.hist_len - 1 - cfg.history_every * j for j in range(1, cfg.history_steps + 1)],
+                                     device=dev, dtype=torch.long)
         self.prev_action = torch.zeros(num_envs, 2, device=dev)
         self.lap_count, self.lap_start_t = z(torch.long), z()
         self.last_lap_time = torch.full((num_envs,), float("nan"), device=dev)
@@ -146,6 +158,8 @@ class RacingEnv:
         sizes = [("car", 13), ("prev_action", 2), ("position", 5), ("kappa", len(cfg.lookahead_m)),
                  ("width", len(cfg.lookahead_m)), ("horizon", 1), ("lidar", len(cfg.lidar_angles_deg)),
                  ("car_desc", len(self.car_desc))]
+        if cfg.history_steps > 0:
+            sizes.append(("history", cfg.history_steps * 15))
         self.obs_layout, start = {}, 0
         for key, size in sizes:
             self.obs_layout[key] = slice(start, start + size)
@@ -216,9 +230,41 @@ class RacingEnv:
         self.s_total[ids], self.t_ep[ids], self.stall_t[ids] = 0.0, 0.0, 0.0
         blind = self._rand(k, 0, 1) < cfg.blind_prob
         self.horizon[ids] = torch.where(blind, self._rand(k, *cfg.blind_horizon_m), torch.full((k,), 1e6, device=dev))
+        full_range = torch.full((k,), float(cfg.lidar_range_m), device=dev)
+        self.lidar_range[ids] = torch.where(blind, self.horizon[ids], full_range) if cfg.blind_lidar else full_range
         self.prev_action[ids] = 0.0
         self.lap_count[ids], self.lap_start_t[ids] = 0, 0.0
         self.ep_return[ids], self.ep_len[ids] = 0.0, 0.0
+        self.reset_history(ids)
+
+    def set_view(self, distance_m: float | None, ids: torch.Tensor | None = None) -> None:
+        """Limit how far ahead the car can see (track preview and, if enabled, lidar).
+
+        ``None`` restores full view.  Used for blind-lap evaluation and in the game.
+        """
+        ids = torch.arange(self.n, device=self.device) if ids is None else ids
+        if distance_m is None:
+            self.horizon[ids] = 1e6
+            self.lidar_range[ids] = float(self.cfg.lidar_range_m)
+        else:
+            self.horizon[ids] = float(distance_m)
+            self.lidar_range[ids] = min(float(distance_m), self.cfg.lidar_range_m) if self.cfg.blind_lidar                 else float(self.cfg.lidar_range_m)
+
+    # ------------------------------------------------------------------------
+    def _core(self, ids: torch.Tensor) -> torch.Tensor:
+        """Car-state block + previous action (15 values): what the memory remembers."""
+        return torch.cat([self._car_state(ids), self.prev_action[ids]], 1)
+
+    def reset_history(self, ids: torch.Tensor) -> None:
+        """Fill the memory of cars ``ids`` with their current state (as if it had been steady)."""
+        if self.hist_len and len(ids):
+            self.hist[ids] = self._core(ids)[:, None, :].expand(-1, self.hist_len, -1)
+
+    def push_history(self) -> None:
+        """Append the current state of every car to its memory (once per decision)."""
+        if self.hist_len:
+            core = self._core(torch.arange(self.n, device=self.device))
+            self.hist = torch.cat([self.hist[:, 1:], core[:, None, :]], 1)
 
     # ------------------------------------------------------------------------
     def _locate(self) -> torch.Tensor:
@@ -245,6 +291,7 @@ class RacingEnv:
     def _lidar(self, ids: torch.Tensor) -> torch.Tensor:
         """Distance to the track edges along each ray, shape (len(ids), rays)."""
         tr, sim, rng = self.tracks, self.sim, self.cfg.lidar_range_m
+        car_range = self.lidar_range[ids][:, None]                                       # (n, 1) sensor range per car
         tid = self.tid[ids]
         widx = tr.wrap(tid, self.idx[ids][:, None] + self.lidar_off[None])               # (n, P)
         left, right = tr.left[tid[:, None], widx], tr.right[tid[:, None], widx]          # (n, P, 2)
@@ -267,15 +314,14 @@ class RacingEnv:
         t = (ax * ey - ay * ex)[:, None, :] / dxe
         u = (ax[:, None, :] * self.ray_y[None, :, None] - ay[:, None, :] * self.ray_x[None, :, None]) / dxe
         hit = (t > 0) & (u >= 0) & (u <= 1)
-        return torch.where(hit, t, torch.full_like(t, rng)).amin(2).clamp(max=rng)
+        return torch.minimum(torch.where(hit, t, torch.full_like(t, rng)).amin(2), car_range)
 
-    def _observe(self, ids: torch.Tensor) -> torch.Tensor:
-        tr, sim, cfg = self.tracks, self.sim, self.cfg
-        tid = self.tid[ids]
+    def _car_state(self, ids: torch.Tensor) -> torch.Tensor:
+        sim = self.sim
         vx = sim.vx[ids]
         n_gears = float(max(int(sim.gb_ngears[0]) - 1, 1))
         slip = sim.wheel_slip_angles()[ids]          # from the current state, as a real car would compute it
-        car = torch.stack([
+        return torch.stack([
             vx / 50.0, sim.vy[ids] / 5.0, sim.r[ids], sim.ax[ids] / 15.0, sim.ay[ids] / 15.0,
             sim.steer[ids] / sim.steer_max, sim.thr[ids], sim.brk[ids],
             sim.gear[ids, 0].float() / n_gears, sim.rpm_frac[ids], sim.soc[ids],
@@ -284,6 +330,11 @@ class RacingEnv:
             (slip[:, :2].mean(1) / sim.slip_peak[0]).clamp(-3, 3),
             (slip[:, 2:].mean(1) / sim.slip_peak[2]).clamp(-3, 3),
         ], 1)
+
+    def _observe(self, ids: torch.Tensor) -> torch.Tensor:
+        tr, cfg = self.tracks, self.cfg
+        tid = self.tid[ids]
+        car = self._car_state(ids)
         wl, wr = self.w_left[ids], self.w_right[ids]
         lat = self.lat[ids]
         pos = torch.stack([
@@ -299,7 +350,10 @@ class RacingEnv:
         horizon = (self.horizon[ids] / self.look_m[-1]).clamp(max=1.0)[:, None]
         lidar = torch.sqrt(self._lidar(ids) / cfg.lidar_range_m)   # sqrt: finer resolution up close
         desc = self.car_desc[None].expand(len(ids), -1)
-        obs = torch.cat([car, self.prev_action[ids], pos, kappa, width, horizon, lidar, desc], 1)
+        parts = [car, self.prev_action[ids], pos, kappa, width, horizon, lidar, desc]
+        if self.hist_len:
+            parts.append(self.hist[ids][:, self.hist_idx].reshape(len(ids), -1))
+        obs = torch.cat(parts, 1)
         return obs.clamp(-cfg.obs_clip, cfg.obs_clip)
 
     # ------------------------------------------------------------------------
@@ -362,6 +416,7 @@ class RacingEnv:
         reward = torch.nan_to_num(reward, nan=-cfg.crash_penalty, posinf=0.0, neginf=-cfg.crash_penalty)
         self.prev_action = action
         self.ep_return += reward
+        self.push_history()
 
         done = terminated | truncated
         info: dict = {"off": off, "spun": spun, "stalled": stalled, "lap_done": lap_done,

@@ -51,9 +51,41 @@ def validation_tracks(preset: str, count: int) -> list[Track]:
     for i, t in enumerate(tracks):
         t.name = f"val_random_{i}"
     local = ROOT / "tracks" / "local"
-    if preset != "fs" and local.is_dir():
+    if not preset.startswith("fs") and local.is_dir():          # real circuits only for full-size cars
         tracks += [Track.load(p) for p in sorted(local.glob("*.npz"))]
     return tracks
+
+
+def load_grown(net, state: dict) -> None:
+    """Load a driver's weights, allowing the new observation to have EXTRA inputs at the end.
+
+    Example: adding a memory block (``--history``) appends inputs.  The first layer
+    of both networks gets zero weights for the new inputs, so the new driver
+    starts out driving exactly like the old one and learns to use the new
+    inputs from there - instead of throwing away billions of decisions of
+    experience.  Anything else that does not match is an error.
+    """
+    own = net.state_dict()
+    grown = []
+    for key, old in state.items():
+        new = own[key]
+        if old.shape == new.shape:
+            own[key] = old
+        elif key.endswith("0.weight") and old.shape[0] == new.shape[0] and old.shape[1] < new.shape[1]:
+            w = torch.zeros_like(new)
+            w[:, : old.shape[1]] = old
+            own[key] = w
+            grown.append(key)
+        elif key.startswith("obs_norm.") and old.dim() == 1 and old.shape[0] < new.shape[0]:
+            v = new.clone()
+            v[: old.shape[0]] = old
+            own[key] = v
+            grown.append(key)
+        else:
+            raise ValueError(f"cannot load {key}: checkpoint {tuple(old.shape)} vs network {tuple(new.shape)}")
+    net.load_state_dict(own)
+    if grown:
+        print(f"observation grew: new inputs start with zero weight ({', '.join(grown)})", flush=True)
 
 
 def keep_awake() -> None:
@@ -82,6 +114,14 @@ def main() -> None:
                     help="preset for the random validation tracks (default: the first one in --preset)")
     ap.add_argument("--init-from", type=Path, default=None,
                     help="start from the weights of an existing driver (.pt) instead of from scratch")
+    ap.add_argument("--reset-noise", type=float, default=None,
+                    help="set the exploration noise to this value at the start (e.g. 0.1 after --init-from)")
+    ap.add_argument("--history", type=int, default=0,
+                    help="memory: number of past car-state samples in the observation (0 = off; e.g. 8 = last ~1 s)")
+    ap.add_argument("--grip-range", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
+                    help="tyre grip multiplier range for training cars (default 0.88 1.05)")
+    ap.add_argument("--min-noise", type=float, default=None,
+                    help="floor for the exploration noise (default 0.03)")
     ap.add_argument("--refresh-every", type=int, default=10, help="replace circuits every N updates")
     ap.add_argument("--refresh-frac", type=float, default=0.1, help="share of circuits replaced each time")
     ap.add_argument("--hours", type=float, default=None, help="stop after this much wall-clock time")
@@ -117,6 +157,12 @@ def main() -> None:
         ppo_cfg.minibatches = args.minibatches
     if args.rollout:
         ppo_cfg.rollout_steps = args.rollout
+    if args.min_noise:
+        ppo_cfg.min_std = args.min_noise
+    if args.history:
+        env_cfg.history_steps = args.history
+    if args.grip_range:
+        env_cfg.rand_grip = tuple(args.grip_range)
     print(f"generating {args.tracks} training circuits ({args.preset}) ...", flush=True)
     pool = [random_track(rng, args.preset, name=f"train_{i}") for i in range(args.tracks)]
     ds = pool[0].ds
@@ -137,7 +183,7 @@ def main() -> None:
         print(f"resumed {run / 'latest.pt'} at update {it0}, {ppo.total_steps:,} decisions")
     if args.init_from is not None and it0 == 0:
         ck = torch.load(args.init_from, map_location=args.device, weights_only=False)
-        ppo.net.load_state_dict(ck["model"])
+        load_grown(ppo.net, ck["model"])
         ppo.ret_norm.load_state_dict(ck["ret_norm"])
         # continue at the learning rate the driver ended with: a converged driver has very
         # little exploration noise, so a fresh (larger) rate would change it far too abruptly
@@ -146,6 +192,11 @@ def main() -> None:
             g["lr"] = ppo.lr
         print(f"initialised from {args.init_from} ({ck.get('total_steps', 0):,} decisions of experience)", flush=True)
         args.warm_start = False
+    if args.reset_noise is not None:
+        import math as _math
+        with torch.no_grad():
+            ppo.net.log_std.fill_(_math.log(args.reset_noise))
+        print(f"exploration noise reset to {args.reset_noise}", flush=True)
     if args.warm_start and it0 == 0:
         print("warm start: imitating the rule-based driver ...", flush=True)
         info = warm_start(ppo, env.scripted_teacher(), steps=args.warm_steps)

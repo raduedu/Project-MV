@@ -96,14 +96,20 @@ class ObservationAdapter:
             near = self._xy[int(env.idx[0])]
             if (near[0] - x) ** 2 + (near[1] - y) ** 2 > 30.0 ** 2:           # teleported
                 self._located = False
-        if not self._located:
+        fresh = not self._located
+        if fresh:
             d2 = (self._xy[:, 0] - x) ** 2 + (self._xy[:, 1] - y) ** 2
             env.idx[0] = int(d2.argmin())
             env.along[0] = 0.0
             self._located = True
         env._locate()
-        env.horizon[0] = 40.0 if self.blind else 1e6
+        env.set_view(40.0 if self.blind else None)
         env.prev_action[0, 0], env.prev_action[0, 1] = float(prev_action[0]), float(prev_action[1])
+        # memory (if the driver was trained with one): one sample per decision, as in training
+        if fresh:
+            env.reset_history(torch.arange(1))
+        else:
+            env.push_history()
         return env.observe()
 
     # handy read-outs for diagnostics

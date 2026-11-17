@@ -30,7 +30,11 @@ driver never trains on them.
 | `--tracks` | Size of the pool of random circuits | 256–512. 10 % are replaced every 10 updates |
 | `--preset` | Track generator(s): `mixed` (default), `circuit`, `gp`, `fs`, `fs_segments`; combine with `+` | **Recommended: `mixed+gp`** — `gp` adds long straights into slow corners and chicanes (engineering log WP13–14). FS scale: `fs+fs_segments` |
 | `--val-preset` | Generator for the random validation tracks | Keep it fixed between runs you want to compare |
-| `--init-from` | Start from an existing driver's weights | For fine-tuning on new tracks or a similar car |
+| `--init-from` | Start from an existing driver's weights | For fine-tuning on new tracks or a similar car. Also works when the new observation has extra inputs at the end (e.g. `--history`) |
+| `--history N` | Memory: N past samples of the car state (0.12 s apart) | 8 ≈ the last second. Changes the observation size |
+| `--grip-range LOW HIGH` | Hidden tyre-grip variation per episode | Default 0.88 1.05 |
+| `--reset-noise X` / `--min-noise X` | Exploration noise at the start / its floor | For fine-tuning a converged driver: e.g. 0.1 / 0.06 |
+| `--vehicle a,b,c` | One driver for several cars | Fleet is split evenly between them |
 | `--hours` / `--steps` / `--iters` | When to stop | Any one of them |
 | `--eval-every` | Updates between validation runs | 100 ≈ every 5–8 minutes |
 | `--warm-start` | First imitate the rule-based driver | See engineering log WP7 for the measured effect |
@@ -128,3 +132,10 @@ Environment settings (sensors, reward, randomisation) are the fields of
 `runs/<name>/config.json`, and the in-game driver reads the sensor settings
 from there. Change **one thing at a time** and write the experiment and its
 outcome into `engineering-log.md`.
+
+## 8. Training while away (queue)
+
+`scripts\queue_runs.py runs\my_queue.json` runs jobs one after another,
+optionally waiting for a running process first. Format and an example are in
+the script's docstring; `runs/queue_lane1.json` is a real one. Two queues can run
+side by side: one run uses only ~40 % of this GPU.

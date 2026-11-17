@@ -41,11 +41,13 @@ def fake_telemetry(env: RacingEnv):
     )
 
 
+@pytest.mark.parametrize("history", [0, 6], ids=["no_memory", "memory"])
 @pytest.mark.parametrize("path", CARS, ids=lambda p: p.stem)
-def test_adapter_reproduces_training_observation(path):
+def test_adapter_reproduces_training_observation(path, history):
     vp = load_vehicle(path)
     track = random_tracks(1, seed=21, cfg="mixed")[0]
     cfg = eval_config()
+    cfg.history_steps = history
     truth = RacingEnv(vp, TrackBatch([track]), 1, cfg, device="cpu")
     truth.fixed_start = (int(track.n * 0.37), 25.0)          # start somewhere in the middle of the lap
     truth.reset(torch.arange(1))
@@ -53,12 +55,14 @@ def test_adapter_reproduces_training_observation(path):
     driver = ScriptedDriver(truth)
     obs = truth.observe()
     worst = 0.0
-    for _ in range(250):                                     # 10 s of driving
+    warmup = cfg.history_steps * cfg.history_every + 1       # the adapter's memory starts empty
+    for k in range(250):                                     # 10 s of driving
         action, _, _ = driver.act(obs)
         obs, _, term, trunc, _ = truth.step(action)
         assert not (term | trunc).any(), "reference run should not end"
         got = adapter.update(fake_telemetry(truth), prev_action=tuple(action[0].clamp(-1, 1).tolist()))
-        worst = max(worst, float((got - obs).abs().max()))
+        if k >= warmup:
+            worst = max(worst, float((got - obs).abs().max()))
     assert worst < 2e-3, f"largest observation mismatch {worst:.2e}"
     assert adapter.lateral_offset == pytest.approx(float(truth.lat[0]), abs=1e-3)
 
