@@ -26,8 +26,9 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-gh auth status 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
+$loggedIn = $false
+try { gh auth status 2>$null | Out-Null; $loggedIn = ($LASTEXITCODE -eq 0) } catch { $loggedIn = $false }
+if (-not $loggedIn) {
     Write-Host "Not logged in to GitHub. Starting the login (choose GitHub.com, HTTPS, browser)..." -ForegroundColor Yellow
     gh auth login
     if ($LASTEXITCODE -ne 0) { Write-Host "Login did not complete."; exit 1 }
@@ -47,8 +48,11 @@ if (git status --porcelain) {
 $hasRemote = (git remote) -contains "origin"
 if (-not $hasRemote) {
     $user = gh api user --jq .login
-    gh repo view "$user/$repo" 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    # "not found" is the normal answer the first time; with ErrorActionPreference=Stop,
+    # Windows PowerShell 5.1 would turn gh's error message into a fatal error, hence try/catch
+    $exists = $false
+    try { gh repo view "$user/$repo" 2>$null | Out-Null; $exists = ($LASTEXITCODE -eq 0) } catch { $exists = $false }
+    if ($exists) {
         Write-Host "Repository $user/$repo already exists; connecting this folder to it."
         git remote add origin "https://github.com/$user/$repo.git"
         git push -u origin HEAD
