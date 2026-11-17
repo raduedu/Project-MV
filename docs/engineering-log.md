@@ -409,7 +409,7 @@ the centre line", 18 % off the reference.
 | 11.1 | The reference could not be *driven* in the simulator by a simple tracking controller (lost the car on corner entry: the reference trail-brakes with the rear axle at its limit) | ⚠️ open — the reference is probably 1–2 % optimistic on corner entry; treat "within 3 %" as the realistic target |
 | 11.2 | Direct lap-time optimisation of the line (L-BFGS on a spline) failed: track-edge clipping makes the objective noisy | Replaced by a curvature QP re-weighted by measured lap-time sensitivity (gain over minimum curvature: 0.7–2.3 %) |
 | 11.3 | Minimum-curvature QP diverged at Spa's La Source (track wider than the corner radius) | Line limited to 70 % of the local radius on the inside |
-| 11.4 | Lead review of `mv/planning` code | ⚠️ open |
+| 11.4 | Lead review of `mv/planning` code | ⚠️ partly done. Integration checked: `scripts/evaluate.py` reads the reference files and prints the gap (rule-based driver +30.8 % at Imola, +22.3 % at Monza). Consistency cross-check against the independently trained RL driver (WP13): it never beats the reference (Mugello 2:07.9 vs 2:02.7, Spa 2:42.0 vs 2:35.8) but does beat the reference's *centre-line* time (2:07.9 vs 2:16.4), exactly as expected for a driver that uses a racing line. A line-by-line code review is still open |
 
 ## WP12 — One driver for several cars ✅ (mechanism only; no multi-car driver trained yet)
 
@@ -515,7 +515,19 @@ Same validation set as WP13 (so results compare directly). Question under
 test: does practice on heavy braking zones fix Imola and Monza without losing
 Mugello/Spa pace? Output `runs/gt3rs_v2.log`, `runs/gt3rs_v2/`.
 
-*Results to be appended here.*
+First data point (update 100, 52 M decisions, ~114 000 decisions/s): all 6
+random validation circuits completed (5/6 before), Mugello 2:07.5, Spa 2:41.4
+(both marginally faster), **Imola and Monza still off at the same metre
+(3 368 m, 946 m)**. Training stable (KL ≈ 0.012, noise 0.03, 6.8 crashes per
+100 km on the harder track mix). Too early to judge; the deciding numbers are
+the later validation blocks in `runs/gt3rs_v2.log`.
+
+If Imola/Monza still fail by the end: the likely reason is that exploration
+noise is already at its floor (0.03), so the driver hardly tries braking
+earlier. Next experiment would be the same fine-tune with the noise reset to
+~0.1 (`PPOConfig.min_std` / `log_std`), logged as a separate run.
+
+*Final results to be appended here.*
 
 ## Next steps (in order)
 
