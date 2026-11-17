@@ -793,3 +793,10 @@ or checkpoints.
 **Keeping it up to date:** commit, then
 `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` (it
 pushes; the safety check runs every time).
+
+**Authorship (2026-11-17, owner's request).** All commit messages were rewritten
+without the co-author lines (code unchanged, verified tree-identical) and the
+history on GitHub replaced (force-push with lease). GitHub now lists `raduedu`
+as sole author and contributor. Old history kept locally only, in branch
+`backup/before-coauthor-removal`. From now on no attribution lines are added
+(rule in `CLAUDE.md`).
