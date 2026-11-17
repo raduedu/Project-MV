@@ -1,0 +1,86 @@
+# Porsche 911 GT3 RS (992.1, MY2023-2024), 4.0 L NA flat-six, RWD, 7-speed PDK, no Weissach-pack mass credit
+# Convention: "# SOURCE: <name>" = published figure, "# ESTIMATE: <method>" = not published (see docs/vehicle-data-sources.md).
+name: Porsche 911 GT3 RS (992)
+chassis:
+  mass_kg: 1525.0                  # SOURCE: Porsche newsroom kerb weight 1,450 kg (DIN, 90 % fuel, no driver) + 75 kg driver
+  yaw_inertia_kgm2: 1864.0         # ESTIMATE: m*(0.45*wheelbase)^2, radius of gyration 0.45*L (rear-engined car; centre-mass would be lower)
+  wheelbase_m: 2.457               # SOURCE: auto-data.net / Porsche data
+  front_weight_frac: 0.388         # SOURCE: drivar.de (38.8 / 61.2 per Porsche data); DIN mass, driver would shift ~+0.5 %, ignored
+  cg_height_m: 0.47                # ESTIMATE: typical rear-engine 911 CG ~0.36 x height-class value for 1.322 m car
+  track_front_m: 1.630             # SOURCE: Porsche technical data (via drivar.de)
+  track_rear_m: 1.582              # SOURCE: Porsche technical data (via drivar.de)
+  roll_stiffness_front_frac: 0.56  # ESTIMATE: rear-engine car needs front-biased roll stiffness to avoid snap oversteer
+  width_m: 1.900                   # SOURCE: auto-data.net (2.027 m with mirrors)
+  length_m: 4.572                  # SOURCE: auto-data.net
+aero:
+  cda_m2: 0.834                    # ESTIMATE: Cd 0.39 (SOURCE auto-data.net, wings at max) x A 2.14 m2 (frontal area not published; 0.85 x 1.90 x 1.322 box area)
+  cla_front_m2: 0.864              # ESTIMATE: total ClA 2.16 m2 = mean of 409 kg@200 km/h (2.12) and 860 kg@285 km/h (2.20), SOURCE Porsche; 40 % front (balance unpublished)
+  cla_rear_m2: 1.296               # ESTIMATE: 60 % rear. Full-downforce (non-DRS) setting; DRS flat-wing mode is what gives the 296 km/h top speed
+  air_density: 1.225
+tire_front:                        # 275/35 R20 (SOURCE: Porsche newsroom), Michelin Pilot Sport Cup 2 R class
+  radius_m: 0.3432                 # ESTIMATE: free radius 0.3503 m (0.254 + 0.0963) x 0.98
+  mu_lat: 1.40                     # ESTIMATE: Cup 2 R class 1.35-1.45
+  mu_long: 1.35                    # ESTIMATE: slightly below mu_lat
+  fz_ref_n: 2902.0                 # ESTIMATE: static corner load = 0.5*1525*9.81*0.388
+  load_exp_lat: 0.85               # ESTIMATE: typical
+  load_exp_long: 0.90              # ESTIMATE: typical
+  peak_slip_angle_deg: 6.5         # ESTIMATE: stiff Cup tyre peaks slightly earlier than road tyre
+  falloff_level: 0.87              # ESTIMATE: schema default
+  rolling_resistance: 0.012        # ESTIMATE: schema default
+tire_rear:                         # 335/30 R21 (SOURCE: Porsche newsroom)
+  radius_m: 0.3599                 # ESTIMATE: free radius 0.3672 m (0.2667 + 0.1005) x 0.98
+  mu_lat: 1.40                     # ESTIMATE: as front
+  mu_long: 1.45                    # ESTIMATE: wide driven rear tyre, traction limited by TC
+  fz_ref_n: 4580.0                 # ESTIMATE: static corner load = 0.5*1525*9.81*0.612
+  load_exp_lat: 0.85               # ESTIMATE
+  load_exp_long: 0.90              # ESTIMATE
+  peak_slip_angle_deg: 6.5         # ESTIMATE
+  falloff_level: 0.87              # ESTIMATE
+  rolling_resistance: 0.012        # ESTIMATE
+brakes:
+  max_torque_nm: 7400.0            # ESTIMATE: 1.4 g * m * g * r_avg = 1.4*9.81*1525*0.3515 = 7,360 Nm (no aero credit); discs 408 mm / 380 mm 6-/4-piston (SOURCE Porsche) are sized for far more
+  front_share: 0.70                # ESTIMATE: ideal bias at 1.4 g with 39 % static front and CG 0.47 m: ~0.67 + aero front, so ~0.70
+  response_time_s: 0.05            # ESTIMATE: schema default
+steering:
+  max_wheel_angle_deg: 33.0        # ESTIMATE: typical 911 road-wheel lock (turning circle 10.5 m SOURCE auto-data.net)
+  max_rate_deg_s: 60.0             # ESTIMATE: schema default
+  steering_ratio: 14.1             # SOURCE: Porsche technical data (on-centre, via drivar.de); 992 uses rear-axle steering not modelled
+  lock_deg: 450.0                  # ESTIMATE: 33 deg x ~13.6 average ratio
+powertrain:
+  type: ice
+  throttle_response_time_s: 0.05   # ESTIMATE: single-throttle-per-cylinder NA engine, quick
+  gearboxes:
+    pdk:
+      ratios: [3.75, 2.38, 1.70, 1.34, 1.11, 0.957, 0.844]   # SOURCE: Porsche 991.2 GT3 RS tech sheet / Rennlist forum, "same gears as 992 GT3"; 992 RS ratios not in an official document found - MEDIUM/LOW confidence
+      final_drive: 4.27            # SOURCE: Rennlist forum for 992 GT3 RS (not an official Porsche document) - LOW confidence; 296 km/h in 7th = ~7,800 rpm, plausible
+      upshift_rpm: 8800.0          # ESTIMATE: just under the 9,000 rpm limiter (power peak 8,500 rpm)
+      downshift_rpm: 4500.0        # ESTIMATE: keeps the engine above ~6,500 rpm after a downshift
+      upshift_time_s: 0.06         # ESTIMATE: PDK torque cut ~60 ms
+      downshift_time_s: 0.15       # ESTIMATE
+      efficiency: 0.92             # ESTIMATE: driveline loss (PDK + diff), curve is at the crank
+  units:
+    - name: boxer_4_0
+      kind: ice
+      gearbox: pdk
+      front_frac: 0.0
+      rpm: [1000, 1500, 2500, 3500, 4500, 5500, 6300, 7000, 7500, 8000, 8500, 9000]
+      torque_nm: [270, 310, 370, 400, 430, 450, 465, 462, 455, 445, 434, 410]   # SOURCE: 465 Nm @ 6,300 and 386 kW (=434 Nm) @ 8,500 rpm (Porsche); other points ESTIMATE: typical 4.0 NA shape, scaled to hit the published points
+      rpm_max: 9000.0              # SOURCE: auto-data.net rev limit 9,000 rpm
+      rpm_idle: 900.0              # ESTIMATE: typical GT3 idle
+      coast_torque_nm: 100.0       # ESTIMATE: ~25 % of 4.0 L friction/pumping at 9,000 rpm
+      max_power_kw: 0.0
+      efficiency: 1.0
+      regen_torque_frac: 1.0
+electronics:
+  traction_control: true
+  abs: true
+  tc_slip_limit: 0.95
+  abs_slip_limit: 0.97
+source: "Porsche newsroom GT3 RS world premiere press release 17/08/2022 (power, weight, downforce, tyres, brakes), auto-data.net (dimensions, Cd, rev limit, peak torque), drivar.de quoting Porsche data (track, weight distribution, steering ratio), 991.2 GT3 RS Porsche tech sheet + Rennlist (gear ratios, final drive); see docs/vehicle-data-sources.md"
+notes: >
+  992.1 GT3 RS, kerb 1,450 kg DIN (without Weissach package; Weissach is a few kg lighter with magnesium wheels
+  about 8 kg more). 386 kW (525 PS) @ 8,500 rpm, 465 Nm @ 6,300 rpm, 0-100 km/h 3.2 s, 296 km/h in 7th. Aero is
+  the full-downforce setting (409 kg @ 200 km/h, 860 kg @ 285 km/h); Cd 0.39 refers to that setting, so the
+  simulated top speed is lower than Porsche's DRS-open 296 km/h. Frontal area, front/rear downforce balance,
+  CG height, yaw inertia and tyre grip are estimates. Gear ratios/final drive are carried over from the 991.2
+  sheet and forum data (LOW confidence).

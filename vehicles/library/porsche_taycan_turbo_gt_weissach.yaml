@@ -1,0 +1,108 @@
+# Porsche Taycan Turbo GT with Weissach package (MY2025-2026, EU spec)
+# Dual PMSM AWD: front motor single-speed, rear motor 2-speed, 105/97 kWh 800 V battery.
+# Convention: "# SOURCE: <name>" = published figure, "# ESTIMATE: <method>" = not published (see docs/vehicle-data-sources.md).
+name: Porsche Taycan Turbo GT Weissach
+chassis:
+  mass_kg: 2295.0                  # SOURCE: Porsche DIN unladen 2,290 kg (Turbo GT) - ~70 kg Weissach saving = 2,220 kg DIN; +75 kg driver = 2,295 kg (same as EU unladen figure which already includes 75 kg driver)
+  yaw_inertia_kgm2: 3908.0         # ESTIMATE: m*(0.45*wheelbase)^2, radius of gyration 0.45*L as for large sedans/GT cars (Model S-class cars land at 0.43-0.46 L)
+  wheelbase_m: 2.900               # SOURCE: Porsche technical data
+  front_weight_frac: 0.48          # ESTIMATE: not published; dual-motor EV with rear 2-speed box/rear seats deleted -> slightly rear-biased, 48/52
+  cg_height_m: 0.45                # ESTIMATE: low-slung 1.378 m tall EV with floor battery, ~0.33 x height
+  track_front_m: 1.690             # SOURCE: Porsche technical data
+  track_rear_m: 1.655              # SOURCE: Porsche technical data
+  roll_stiffness_front_frac: 0.55  # ESTIMATE: typical AWD GT value; Porsche Active Ride shifts it dynamically, not published
+  width_m: 1.998                   # SOURCE: Porsche technical data (without mirrors; 2.144 m with)
+  length_m: 4.968                  # SOURCE: Porsche technical data
+aero:
+  cda_m2: 0.722                    # SOURCE: Porsche Cd 0.31 (Weissach, fixed wing; 0.29 w/o package) x A 2.33 m2 (Porsche tech data) = 0.722
+  cla_front_m2: 0.203              # ESTIMATE: 220 kgf total (SOURCE Porsche) at assumed 300 km/h -> ClA 0.507 m2, split 40/60 (balance unpublished)
+  cla_rear_m2: 0.304               # ESTIMATE: as above, 60 % rear (fixed carbon wing)
+  air_density: 1.225
+tire_front:                        # 265/35 ZR21 on 9.5Jx21 ET60 (SOURCE: Porsche), Pirelli P Zero Trofeo RS / Michelin PS Cup 2 R class
+  radius_m: 0.3523                 # ESTIMATE: free radius 0.3594 m (0.2667 rim + 0.0928 sidewall) x 0.98 loaded/rolling factor
+  mu_lat: 1.35                     # ESTIMATE: Cup 2 R / Trofeo RS class 1.35-1.45; low end for a 2.3 t car with big load
+  mu_long: 1.30                    # ESTIMATE: ~0.05 below mu_lat for road-legal semi-slick
+  fz_ref_n: 5404.0                 # ESTIMATE: static corner load = 0.5*2295*9.81*0.48
+  load_exp_lat: 0.85               # ESTIMATE: typical radial value
+  load_exp_long: 0.90              # ESTIMATE: typical
+  peak_slip_angle_deg: 7.0         # ESTIMATE: schema default for road semi-slick
+  falloff_level: 0.87              # ESTIMATE: schema default
+  rolling_resistance: 0.012        # ESTIMATE: schema default for 21 inch low-profile performance tyre
+tire_rear:                         # 305/30 ZR21 on 11.5Jx21 ET66 (SOURCE: Porsche)
+  radius_m: 0.3510                 # ESTIMATE: free radius 0.3582 m (0.2667 + 0.0915) x 0.98
+  mu_lat: 1.35                     # ESTIMATE: as front
+  mu_long: 1.35                    # ESTIMATE: slightly higher than front: wider tyre, driven axle
+  fz_ref_n: 5855.0                 # ESTIMATE: static corner load = 0.5*2295*9.81*0.52
+  load_exp_lat: 0.85               # ESTIMATE
+  load_exp_long: 0.90              # ESTIMATE
+  peak_slip_angle_deg: 7.0         # ESTIMATE
+  falloff_level: 0.87              # ESTIMATE
+  rolling_resistance: 0.012        # ESTIMATE
+brakes:
+  max_torque_nm: 11100.0           # ESTIMATE: 1.4 g * m * g * r_avg = 1.4*9.81*2295*0.352 = 11,080 Nm (no aero/regen credit); PCCB 420x40 / 410x32 discs (SOURCE Porsche) are ample
+  front_share: 0.65                # ESTIMATE: 10-piston 420 mm front vs 4-piston 410 mm rear, rear-biased weight -> ~65 % front
+  response_time_s: 0.05            # ESTIMATE: schema default (brake-by-wire/regen blending not published)
+steering:
+  max_wheel_angle_deg: 34.0        # ESTIMATE: typical GT road-wheel lock (turning circle 11.2 m is SOURCE Porsche, includes rear steer)
+  max_rate_deg_s: 60.0             # ESTIMATE: schema default
+  steering_ratio: 13.9             # SOURCE: Porsche technical data (on-centre)
+  lock_deg: 470.0                  # ESTIMATE: 34 deg x 13.9 ratio ~ 473 deg, ratio assumed constant
+powertrain:
+  type: ev
+  throttle_response_time_s: 0.03   # ESTIMATE: electric torque response ~30 ms
+  battery:
+    capacity_kwh: 97.0             # SOURCE: Porsche net (usable) energy content; 105 kWh gross
+    max_discharge_kw: 625.0        # ESTIMATE: sustained 580 kW mechanical / 0.93 efficiency. Overboost/launch 760-815 kW and Attack Mode 700 kW are time-limited (2-10 s), not modelled
+    max_regen_kw: 400.0            # SOURCE: Porsche newsroom (up to 400 kW recuperation)
+    soc_init: 0.9
+    soc_min: 0.05
+  gearboxes:
+    rear:
+      ratios: [15.0, 7.1]          # ESTIMATE: Porsche says ~15:1 (1st) and ~8:1 (2nd) for Taycan; Turbo GT 2nd is "longer" for 305 km/h -> 7.1 chosen so 305 km/h = 16,370 rpm at rpm_max
+      final_drive: 1.0             # overall ratios above already include the reduction stages
+      upshift_rpm: 12000.0         # ESTIMATE: in power-limited region shift point is a wash; 12,000 rpm 1st = ~106 km/h
+      downshift_rpm: 5500.0        # ESTIMATE: gives ~11,600 rpm after downshift, below the upshift point
+      upshift_time_s: 0.10         # ESTIMATE: electric motor torque fill is fast
+      downshift_time_s: 0.15       # ESTIMATE
+      efficiency: 0.97             # ESTIMATE: gear mesh + diff loss for a 1-2 stage reduction (curve is at the motor shaft)
+    front:
+      ratios: [7.1]                # ESTIMATE: Porsche says ~8:1 on standard Taycan, front drive "overhauled" for 305 km/h; 7.1 keeps motor <= 16,500 rpm
+      final_drive: 1.0
+      efficiency: 0.97             # ESTIMATE: as rear
+  units:
+    - name: rear_motor
+      kind: motor
+      gearbox: rear
+      front_frac: 0.0
+      rpm: [0, 2000, 4237, 5000, 6000, 7000, 8000, 10000, 12000, 14000, 16000, 16500]
+      torque_nm: [800, 800, 800, 678, 565, 484, 424, 339, 283, 242, 212, 205]   # ESTIMATE: Tpk 800 Nm (1,240 Nm total SOURCE Porsche minus 440 front; matches ~12,000 Nm wheel torque at ~15:1) to base speed, then 355 kW/omega
+      rpm_max: 16500.0             # ESTIMATE: 305 km/h x 7.1:1 = 16,370 rpm
+      rpm_idle: 0.0
+      max_power_kw: 355.0          # ESTIMATE: ~61 % of the 580 kW sustained system power (SOURCE Porsche total); per-axle split unpublished
+      efficiency: 0.93             # ESTIMATE: SiC inverter ~98 % x PMSM ~95 %
+      regen_torque_frac: 1.0
+    - name: front_motor
+      kind: motor
+      gearbox: front
+      front_frac: 1.0
+      rpm: [0, 2500, 4883, 6000, 7000, 8000, 10000, 12000, 14000, 16000, 16500]
+      torque_nm: [440, 440, 440, 358, 307, 269, 215, 179, 153, 134, 130]        # ESTIMATE: Tpk 440 Nm (=1,240 - 800) to base speed, then 225 kW/omega
+      rpm_max: 16500.0             # ESTIMATE: as rear
+      rpm_idle: 0.0
+      max_power_kw: 225.0          # ESTIMATE: remaining ~39 % of 580 kW sustained
+      efficiency: 0.93             # ESTIMATE
+      regen_torque_frac: 1.0
+electronics:
+  traction_control: true
+  abs: true
+  tc_slip_limit: 0.95
+  abs_slip_limit: 0.97
+source: "Porsche AG newsroom/technical data sheet Taycan Turbo GT (MY S 03/2024: dims, track, DIN weight, Cd, A, steering ratio, tyres, brakes, battery), Porsche Christophorus + press kit (power, torque, downforce, Weissach delta), Porsche Taycan powertrain article (gear ratios ~8:1 / ~15:1); see docs/vehicle-data-sources.md"
+notes: >
+  Weissach package, MY2025-26. max_power_kw values sum to the 580 kW SUSTAINED system output; Launch Control
+  overboost is 760 kW (815 kW / 1,108 PS for max 2 s) and Attack Mode adds up to 120 kW (700 kW) for 10 s - none
+  modelled, so simulated 0-100 km/h is slower than Porsche's 2.2 s. Per-axle motor power/torque split, rear 2nd-gear
+  and front ratios, weight distribution, CG height and downforce speed (220 kg assumed at 300 km/h) are not published
+  and are estimates. Rear-axle steering, torque vectoring and Active Ride are not representable in this schema.
+  Mass: DIN 2,220 kg (Weissach, 2,290 kg for non-Weissach minus ~70 kg) + 75 kg driver. Top speed 305 km/h (closed track,
+  Weissach), 290 km/h otherwise.

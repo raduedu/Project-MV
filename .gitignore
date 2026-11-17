@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Training output
+runs/
+*.pt
+!models/release/*.pt
+
+# Data pulled out of a local Assetto Corsa install. This is Kunos IP and
+# must never be committed or redistributed.
+.cache/
+vehicles/local/
+tracks/local/
+
+# OS / editor
+.vs/
+.vscode/
+Thumbs.db

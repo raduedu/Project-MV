@@ -1,0 +1,118 @@
+# Porsche 918 Spyder WITH Weissach package (1,634 kg DIN). Hybrid: 4.6 L V8 + rear motor via 7-speed PDK + front motor (own gearbox)
+# Convention: "# SOURCE: <name>" = published figure, "# ESTIMATE: <method>" = not published (see docs/vehicle-data-sources.md).
+name: Porsche 918 Spyder Weissach
+chassis:
+  mass_kg: 1709.0                  # SOURCE: Weissach package DIN kerb 1,634 kg (ultimatespecs/Porsche US; non-Weissach 1,674-1,675 kg) + 75 kg driver
+  yaw_inertia_kgm2: 2588.0         # ESTIMATE: m*(0.45*wheelbase)^2, radius of gyration 0.45*L
+  wheelbase_m: 2.730               # SOURCE: auto-data.net / stuttcars
+  front_weight_frac: 0.43          # SOURCE: Porsche press material (43:57)
+  cg_height_m: 0.45                # ESTIMATE: 1.167 m tall mid-engine hypercar; ~0.39 x height, battery low behind cabin
+  track_front_m: 1.664             # SOURCE: auto-data.net / ultimatespecs
+  track_rear_m: 1.612              # SOURCE: auto-data.net / ultimatespecs
+  roll_stiffness_front_frac: 0.52  # ESTIMATE: mid-engine, near neutral split
+  width_m: 1.940                   # SOURCE: auto-data.net (2.053 m with mirrors)
+  length_m: 4.643                  # SOURCE: auto-data.net
+aero:
+  cda_m2: 0.666                    # ESTIMATE: Cd 0.36 (SOURCE ultimatespecs, Weissach) x A 1.85 m2 (frontal area not published; 0.8 x 1.94 x 1.167 ~ 1.81, rounded up for wing)
+  cla_front_m2: 0.340              # ESTIMATE: downforce NOT published; assumed ClA 0.85 m2 (~170 kgf at 200 km/h, wings deployed, hypercar class), 40 % front
+  cla_rear_m2: 0.510               # ESTIMATE: 60 % rear
+  air_density: 1.225
+tire_front:                        # 265/35 R20 on 9.5Jx20 (SOURCE: auto-data.net), Michelin Pilot Sport Cup 2 class
+  radius_m: 0.3398                 # ESTIMATE: free radius 0.3468 m (0.254 + 0.0928) x 0.98
+  mu_lat: 1.40                     # ESTIMATE: Cup 2 class 1.35-1.45
+  mu_long: 1.35                    # ESTIMATE
+  fz_ref_n: 3600.0                 # ESTIMATE: static corner load = 0.5*1709*9.81*0.43
+  load_exp_lat: 0.85               # ESTIMATE: typical
+  load_exp_long: 0.90              # ESTIMATE: typical
+  peak_slip_angle_deg: 6.5         # ESTIMATE
+  falloff_level: 0.87              # ESTIMATE: schema default
+  rolling_resistance: 0.012        # ESTIMATE: schema default
+tire_rear:                         # 325/30 R21 on 12.5Jx21 (SOURCE: auto-data.net)
+  radius_m: 0.3569                 # ESTIMATE: free radius 0.3642 m (0.2667 + 0.0975) x 0.98
+  mu_lat: 1.40                     # ESTIMATE
+  mu_long: 1.45                    # ESTIMATE: wide driven tyre
+  fz_ref_n: 4780.0                 # ESTIMATE: static corner load = 0.5*1709*9.81*0.57
+  load_exp_lat: 0.85               # ESTIMATE
+  load_exp_long: 0.90              # ESTIMATE
+  peak_slip_angle_deg: 6.5         # ESTIMATE
+  falloff_level: 0.87              # ESTIMATE
+  rolling_resistance: 0.012        # ESTIMATE
+brakes:
+  max_torque_nm: 8200.0            # ESTIMATE: 1.4 g * m * g * r_avg = 1.4*9.81*1709*0.3484 = 8,180 Nm; PCCB 410 mm / 390 mm discs (SOURCE ultimatespecs); regen adds up to ~0.5 g more but not counted
+  front_share: 0.62                # ESTIMATE: ideal bias for 43 % front, CG 0.45 m at 1.4 g ~0.64 minus slight rear-bias for stability
+  response_time_s: 0.06            # ESTIMATE: regen-blended brake-by-wire system slightly slower than hydraulic
+steering:
+  max_wheel_angle_deg: 32.0        # ESTIMATE: typical mid-engine supercar lock (turning circle 12.7 m SOURCE auto-data.net)
+  max_rate_deg_s: 60.0             # ESTIMATE: schema default
+  steering_ratio: 14.0             # ESTIMATE: ratio not found in sources; typical Porsche 12-15:1 -> 14:1 (918 also has rear-axle steering, not modelled)
+  lock_deg: 450.0                  # ESTIMATE: 32 deg x 14 ratio
+powertrain:
+  type: hybrid
+  throttle_response_time_s: 0.05   # ESTIMATE: schema default
+  battery:
+    capacity_kwh: 6.8              # SOURCE: Porsche (6.8 kWh nominal Li-ion); usable fraction not published - used as-is
+    max_discharge_kw: 226.0        # ESTIMATE: (115 + 95 kW motors) / 0.93 efficiency; battery peak not published
+    max_regen_kw: 180.0            # ESTIMATE: motors total 210 kW, regen assumed ~85 % of that; Porsche quotes only ~0.5 g regen deceleration (Top Gear)
+    soc_init: 0.9
+    soc_min: 0.05
+  gearboxes:
+    pdk:
+      ratios: [3.91, 2.29, 1.58, 1.19, 0.97, 0.83, 0.67]   # SOURCE: Porsche 918 technical data (via search snippet of spec sheet); 7th is an overdrive
+      final_drive: 3.09            # SOURCE: Porsche 918 technical data
+      upshift_rpm: 8900.0          # ESTIMATE: just below the 9,150 rpm limit (power peak 8,700 rpm)
+      downshift_rpm: 4500.0        # ESTIMATE
+      upshift_time_s: 0.06         # ESTIMATE: PDK torque cut
+      downshift_time_s: 0.15       # ESTIMATE
+      efficiency: 0.92             # ESTIMATE: driveline loss for crank-level curves
+    front:
+      ratios: [7.74]               # ESTIMATE: derived - motor 16,000 rpm (SOURCE auto-data.net) at 265 km/h decoupling (task brief) with 0.3398 m front tyre: 16,000/ (265/3.6/0.3398*60/(2*pi))
+      final_drive: 1.0
+      efficiency: 0.97             # ESTIMATE: single-stage reduction
+  units:
+    - name: v8_4_6
+      kind: ice
+      gearbox: pdk
+      front_frac: 0.0
+      rpm: [1000, 1500, 2500, 3500, 4500, 5500, 6700, 7500, 8700, 9150]
+      torque_nm: [250, 300, 370, 430, 480, 520, 540, 525, 491, 455]   # SOURCE: 540 Nm @ 6,700 rpm and 447 kW (=491 Nm) @ 8,700 rpm; other points ESTIMATE: shaped like a high-revving NA V8
+      rpm_max: 9150.0              # SOURCE: Porsche (9,150 rpm)
+      rpm_idle: 1000.0             # ESTIMATE
+      coast_torque_nm: 90.0        # ESTIMATE: 4.6 L V8 friction/pumping at limiter
+      max_power_kw: 0.0
+      efficiency: 1.0
+      regen_torque_frac: 1.0
+    - name: rear_motor
+      kind: motor
+      gearbox: pdk
+      front_frac: 0.0
+      rpm: [0, 1500, 2928, 4000, 5000, 6000, 7000, 8000, 9150]
+      torque_nm: [375, 375, 375, 275, 220, 183, 157, 137, 120]   # SOURCE: 115 kW / 375 Nm (auto-data.net) rear motor; ESTIMATE: constant torque to base speed 2,928 rpm then 115 kW/omega
+      rpm_max: 9150.0              # SOURCE: auto-data.net (rear motor max 9,150 rpm, crank-synchronous via PDK input)
+      rpm_idle: 0.0
+      max_power_kw: 115.0          # SOURCE: Porsche
+      efficiency: 0.93             # ESTIMATE
+      regen_torque_frac: 1.0       # ESTIMATE: rear motor can regenerate through the PDK with the engine decoupled
+    - name: front_motor
+      kind: motor
+      gearbox: front
+      front_frac: 1.0
+      rpm: [0, 2000, 4320, 6000, 8000, 10000, 12000, 14000, 16000]
+      torque_nm: [210, 210, 210, 151, 113, 91, 76, 65, 57]   # SOURCE: 95 kW / 210 Nm (auto-data.net); ESTIMATE: constant torque to base speed 4,320 rpm then 95 kW/omega
+      rpm_max: 16000.0             # SOURCE: auto-data.net (16,000 rpm) = decoupling at ~265 km/h
+      rpm_idle: 0.0
+      max_power_kw: 95.0           # SOURCE: Porsche
+      efficiency: 0.93             # ESTIMATE
+      regen_torque_frac: 1.0
+electronics:
+  traction_control: true
+  abs: true
+  tc_slip_limit: 0.95
+  abs_slip_limit: 0.97
+source: "Porsche 918 Spyder press/technical data as reproduced by auto-data.net, ultimatespecs.com (Weissach 1,634 kg, Cd 0.36, brakes), stuttcars.com and spec-sheet text for PDK ratios 3.91-0.67 / FD 3.09; see docs/vehicle-data-sources.md"
+notes: >
+  Weissach package car (1,634 kg DIN; base car 1,674-1,675 kg). V8 447 kW (608 PS) @ 8,700 rpm, 540 Nm @ 6,700; rear
+  motor 115 kW, front motor 95 kW, system 652 kW (887 PS) / 1,280 Nm, 0-100 km/h 2.6 s, top speed 345 km/h.
+  Rear motor shares the PDK with the V8 (modelled as a crank-level motor, hence gearbox efficiency 0.92 applies to
+  it too). The front motor decouples at ~265 km/h, modelled through rpm_max 16,000 rpm and an estimated 7.74:1
+  ratio. Battery peak discharge/regen, downforce, frontal area, steering ratio, CG height and yaw inertia are
+  estimates.

@@ -1,0 +1,17 @@
+[project]
+name = "project-mv"
+version = "0.1.0"
+description = "Project MV - a modular, car-agnostic autonomous racing driver trained by reinforcement learning"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "pyyaml", "torch", "matplotlib"]
+
+[project.optional-dependencies]
+dev = ["pytest", "tensorboard"]
+
+[tool.setuptools.packages.find]
+include = ["mv*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
