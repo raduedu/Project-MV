@@ -65,7 +65,7 @@ def plot(track: Track, laps: dict[str, ReferenceLap], best: str, path: Path, tit
     from matplotlib.collections import LineCollection
 
     lap = laps[best]
-    fig, (ax_map, ax_v) = plt.subplots(1, 2, figsize=(16, 7.5), gridspec_kw={"width_ratios": [1.0, 1.25]})
+    fig, (ax_map, ax_v) = plt.subplots(2, 1, figsize=(13, 13.5), gridspec_kw={"height_ratios": [1.9, 1.0]})
 
     # ---- map: track edges and the line coloured by speed ----------------------
     for edge in (track.left_xy, track.right_xy):
@@ -83,7 +83,7 @@ def plot(track: Track, laps: dict[str, ReferenceLap], best: str, path: Path, tit
     ax_map.set_xlabel("x (m)")
     ax_map.set_ylabel("y (m)")
     ax_map.set_title(f"{LABEL[best]} line, coloured by speed")
-    fig.colorbar(lc, ax=ax_map, label="speed (km/h)", shrink=0.8)
+    fig.colorbar(lc, ax=ax_map, label="speed (km/h)", shrink=0.7, pad=0.02)
 
     # ---- speed against distance for every line -----------------------------------
     style = {"centre": dict(color="0.6", lw=1.0), "min_curvature": dict(color="#d95f02", lw=1.2),

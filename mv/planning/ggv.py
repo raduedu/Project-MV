@@ -25,14 +25,15 @@ but solve it for a *steady state* instead of integrating it in time:
 2. Guess ``ax``.  Compute the load on each of the four tyres: static weight,
    downforce, longitudinal load transfer (from ``ax``) and lateral load
    transfer (from ``ay``).
-3. From the loads get every tyre's grip (load-sensitive friction), the
-   longitudinal force it delivers (engine torque through the gearbox, brakes
-   with their front/rear bias, traction control and ABS as force caps, rolling
-   resistance) and - via the friction ellipse - how much sideways grip is left.
+3. From the loads get every tyre's peak grip (load-sensitive friction) and the
+   longitudinal slip the pedal asks of it (engine torque through the gearbox,
+   brakes with their front/rear bias, rolling resistance; traction control
+   and ABS cap the slip).  The combined-slip tyre model then gives the
+   longitudinal and the sideways force of each tyre for a given slip angle.
 4. The sideways force the front and the rear axle must deliver follows from
    ``m * ay`` and the requirement that the car does not start to spin (zero
-   yaw moment).  If either axle needs more than it has, this (v, ay, u) is not
-   achievable.
+   yaw moment).  If either axle needs more than it can deliver at the slip
+   angle of peak grip, this (v, ay, u) is not achievable.
 5. Sum the forces along the direction of travel -> a new ``ax``.  Repeat 2-5
    until ``ax`` stops changing (a fixed-point iteration: the loads depend on
    the acceleration and the acceleration depends on the loads).
@@ -43,11 +44,22 @@ Deliberate simplifications (see docs/08-reference-lap.md for their effect)
 ---------------------------------------------------------------------------
 * Steady state: no yaw dynamics, no actuator lag, load transfer is instant.
 * One pedal at a time (the simulator would allow throttle and brake together).
-* Load transfer uses the path accelerations; the few degrees of body slip that
-  rotate them into the body frame are ignored.
+* Both tyres of an axle work at the same slip angle, and never beyond the slip
+  angle of peak cornering grip (no drifting).
+* The achievable pedal range is assumed to be one piece: full pedal is used
+  when it is achievable, otherwise the limit is found by bisection outwards
+  from the pure-cornering pedal position.  (Near the corners of the envelope
+  an axle can sit within 1-3 % of its limit over a wide pedal range, so the
+  exact position of the envelope's "cliff" is uncertain by about that much.)
 * The gear is the one the simulator's automatic gearbox selects while
   accelerating through speed ``v``; shift time is handled in the speed profile.
 * The battery is assumed to stay above its minimum state of charge.
+
+Validation against the simulator (see tests/test_planning.py and the doc):
+one simulator step started from the predicted steady state reproduces the
+predicted acceleration within ~0.05 m/s^2 with ~zero yaw acceleration; the
+steady cornering limit agrees with a simulated skid-pad within 0.3 %;
+0-200 km/h and 200-0 km/h agree within 1-2 %.
 """
 
 from __future__ import annotations

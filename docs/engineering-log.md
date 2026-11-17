@@ -276,12 +276,20 @@ resume), `mv/rl/pretrain.py` (optional warm start by imitating the baseline).
 | verify1 | first working version (old tyre model, 92-value observation) | 47 M | 1 463 m | 66 % | 0/6; always off at the first heavy braking zone |
 | verify2 | new tyre model + slip-angle observation + 340 m preview | 29 M (stopped) | 1 202 m | 77 % | 0/6 at 15 M |
 | verify3 | + feasible starting speeds (D-014) | 39 M | 1 545 m | 59 % | **2/6: Mugello 2:16.5, random 1:47.2** |
-<!--VERIFY4-->
+| verify4 | + warm start from the baseline driver (D-015) | 48 M (9 M of them warm start) | 1 908 m | 31 % | **3/6: Imola 2:12.1, Mugello 2:21.5, random 1:45.4** |
 
-Reading: learning works and each change helped. After only ~10 minutes the
-driver already beats the baseline on the tracks it completes (Mugello 2:16.5 vs
-2:33.0, −11 %), but it does not yet finish most tracks — it needs far more
-than 40 M decisions, as expected.
+Warm-start detail: straight after imitation (before any PPO) the network completed 3/6 tracks at the
+teacher's pace (Imola 2:20.6). After 75 PPO updates validation had *dropped* to 1/6 while training pace rose —
+the driver was trading safety for speed — and by update 150 it was back to 3/6 and faster (Imola 2:12.1).
+Conclusion: warm start is kept (D-015 active); judge runs by validation over time, not by a single check.
+
+Reading: learning works and each change helped. After only ~10–15 minutes the
+driver already beats the rule-based baseline on the tracks it completes (Imola
+2:12.1 vs 2:26.6, −10 %; Mugello 2:16.5 vs 2:33.0, −11 %), but it does not yet
+finish every track — it needs far more than 50 M decisions, as expected.
+
+Throughput after the 125 Hz change (simulation only): 147 000 decisions/s with
+8 192 cars, 263 000 with 16 384, 440 000 with 32 768 (1.6 GB of GPU memory).
 
 **Problems & resolutions**
 
@@ -334,4 +342,49 @@ Lesson: helpers share the 5-hour usage limit and are cut off without warning.
 Give them exclusive files, ask them to save after every verified step, and
 resume them with a message rather than starting over.
 
-<!--TAIL-->
+## WP10 — Generic Formula Student car ✅
+
+**Objective.** Exercise the FS-scale path (small, light, high-downforce car
+without ABS on 3–5 m wide, 200–500 m tracks) before real car data exists.
+
+**Approach.** `vehicles/library/fs_generic_ev.yaml`: typical class values —
+265 kg with driver, 80 kW rear motor (rules limit), wheelbase 1.55 m, ClA 3.2,
+tyre μ 1.55, traction control but **no ABS**. Not any real team's car; every
+value is an estimate and marked as such.
+
+**Verification.**
+
+| Check | Result | Expectation |
+|---|---|---|
+| 0–100 km/h | 2.72 s | FS EVs: 2.5–3.5 s ✅ |
+| Top speed | 138 km/h (gearing) | ✅ |
+| Cornering at 60 km/h | 1.59 g | 1.5–2.0 g ✅ |
+| Baseline driver on 10 random FS-size tracks, 2 laps | 10/10 completed, 55–89 km/h average | ✅ runs; averages are high for FS (see 10.2) |
+| Locked front wheels cannot steer (no ABS) | yaw gained under full braking < 60 % of that under gentle braking | ✅ `test_car_without_abs_loses_steering_when_brakes_lock` |
+
+**Problems & resolutions**
+
+| # | Problem | Root cause | Resolution |
+|---|---|---|---|
+| 10.1 | Full braking in a corner *spun* the car instead of making it run straight on | First guess of 66 % front brake bias: at 1.5–1.9 g about 72–75 % of the load is on the front axle, so the rear wheels locked first | Bias set to 75 % front. This is the classic brake-balance design rule (fronts must lock first) appearing by itself in the simulator — a good sign for the tyre model |
+| 10.2 ⚠️ open | Generated "fs" tracks are faster and more flowing than real FS tracks, and have no cones | Same generator as for circuits, only scaled | Roadmap phase 6: cone-level generator with slaloms, hairpins (9 m min. diameter), ≤ 80 m straights, plus skidpad and acceleration layouts |
+
+## Next steps (in order)
+
+1. **Long training run** of the 911 GT3 RS (roadmap phase 1) and evaluation
+   against the baseline and the physics reference. Status of the run started at
+   the end of this session: see "WP11" below if present, otherwise
+   `runs/` and `docs/04-training-guide.md`.
+2. **Finish and review the reference lap** (`mv/planning`): script, tests,
+   document; then check the lead's own review of the helper's g-g-v against
+   `VehicleSim`.
+3. **First in-game session** (needs the owner): `docs/07-assetto-corsa-bridge.md`
+   checklist → `scripts/ac_bridge_check.py` → `scripts/ac_drive.py --scripted
+   --dry-run` → scripted driver with `--max-kmh 80` → trained driver.
+4. **System identification** against AC telemetry and tuning of the importer
+   (roadmap phase 2, step 4).
+5. Hyper-parameter study, one change at a time (7.3).
+6. Open items flagged ⚠️ above: 3.3 (generator shapes), 3.4 (flat tracks),
+   5.3/5.4 (tier-2 physics, trail-braking balance), 6.6 (track-limit rule),
+   8.2/8.3 (in-game verification), 10.2 (FS tracks).
+

@@ -20,6 +20,7 @@ diary of what was tried, what worked and what did not is
 | [`docs/01-architecture.md`](docs/01-architecture.md) | How the system fits together; the three contracts (vehicle, track, observation) |
 | [`docs/02-roadmap.md`](docs/02-roadmap.md) | Phases 0–6 with exit criteria, up to Formula Student Driverless |
 | [`docs/03-decision-log.md`](docs/03-decision-log.md) | Every design decision with alternatives and reasons |
+| [`docs/04-training-guide.md`](docs/04-training-guide.md) | How to train on the laptop GPU, what the numbers mean, troubleshooting |
 | [`docs/engineering-log.md`](docs/engineering-log.md) | FS-style log: objective → approach → verification → problems → next steps |
 | [`docs/07-assetto-corsa-bridge.md`](docs/07-assetto-corsa-bridge.md) | Connecting to the running game; setup and verification checklist |
 | [`docs/08-reference-lap.md`](docs/08-reference-lap.md) | Physics reference lap (g-g-v diagram, racing line, speed profile) |
@@ -55,6 +56,17 @@ All commands below are run from the project root with `.venv\Scripts\python.exe`
 | Check the link to the running game | `scripts\ac_bridge_check.py` |
 | Drive in the game | `scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run` (then see its `--help`) |
 | Run the tests | `-m pytest tests -q` |
+
+## Cars included
+
+| File | Car | Source |
+|---|---|---|
+| `vehicles/local/ks_porsche_911_gt3_rs.yaml` | Porsche 911 GT3 RS (991), combustion, RWD | imported from your Assetto Corsa (create with `import_ac_car.py`) |
+| `vehicles/local/ks_porsche_918_spyder.yaml` | Porsche 918 Spyder, hybrid, AWD | imported from your Assetto Corsa |
+| `vehicles/library/porsche_taycan_turbo_gt_weissach.yaml` | Porsche Taycan Turbo GT Weissach, electric, AWD, 2-speed rear | public data |
+| `vehicles/library/porsche_911_gt3_rs_992.yaml` | Porsche 911 GT3 RS (992) | public data |
+| `vehicles/library/porsche_918_spyder.yaml` | Porsche 918 Spyder Weissach | public data |
+| `vehicles/library/fs_generic_ev.yaml` | Generic Formula Student EV (typical class values, no real car) | estimates |
 
 ## Adding a new car
 

@@ -61,7 +61,7 @@ def warm_start(ppo, teacher, steps: int = 600, noise: float = 0.25, lr: float = 
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
-        loss_avg = float(loss) if loss_avg is None else 0.98 * loss_avg + 0.02 * float(loss)
+        loss_avg = float(loss.detach()) if loss_avg is None else 0.98 * loss_avg + 0.02 * float(loss.detach())
         obs, _, term, trunc, _ = env.step(drive)
         crashes += int(term.sum()); episodes += int((term | trunc).sum())
         if (i + 1) % 100 == 0:

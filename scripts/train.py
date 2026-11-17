@@ -55,6 +55,19 @@ def validation_tracks(preset: str, count: int) -> list[Track]:
     return tracks
 
 
+def keep_awake() -> None:
+    """Ask Windows not to go to sleep while this process is running.
+
+    The same request a video player makes; it ends automatically when the
+    process exits and changes no system setting.  Closing the lid or choosing
+    Sleep still suspends the machine.
+    """
+    if sys.platform == "win32":
+        import ctypes
+        es_continuous, es_system_required = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(es_continuous | es_system_required)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vehicle", default="ks_porsche_911_gt3_rs")
@@ -72,13 +85,18 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--allow-sleep", action="store_true", help="do not keep the computer awake during training")
     ap.add_argument("--warm-start", action="store_true",
                     help="first imitate the rule-based driver, then train (see mv/rl/pretrain.py)")
     ap.add_argument("--warm-steps", type=int, default=600)
+    ap.add_argument("--minibatches", type=int, default=None, help="PPO minibatches per epoch (default 4)")
+    ap.add_argument("--rollout", type=int, default=None, help="decisions per car between updates (default 32)")
     args = ap.parse_args()
     if args.hours is None and args.steps is None and args.iters is None:
         args.iters = 300
 
+    if not args.allow_sleep:
+        keep_awake()
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     vp = load_vehicle(find_vehicle(args.vehicle))
@@ -87,6 +105,10 @@ def main() -> None:
     run.mkdir(parents=True, exist_ok=True)
 
     env_cfg, ppo_cfg = EnvConfig(), PPOConfig()
+    if args.minibatches:
+        ppo_cfg.minibatches = args.minibatches
+    if args.rollout:
+        ppo_cfg.rollout_steps = args.rollout
     print(f"generating {args.tracks} training circuits ({args.preset}) ...", flush=True)
     pool = [random_track(rng, args.preset, name=f"train_{i}") for i in range(args.tracks)]
     ds = pool[0].ds
@@ -127,73 +149,76 @@ def main() -> None:
     t_start = time.time()
     it = it0
     val_finished, val_score = float("nan"), float("nan")
-    while True:
-        it += 1
-        stats = ppo.collect()
-        upd = ppo.update()
+    try:
+        while True:
+            it += 1
+            stats = ppo.collect()
+            upd = ppo.update()
 
-        # ---- keep the circuits fresh -------------------------------------------------
-        if args.refresh_every > 0 and it % args.refresh_every == 0:
-            k = max(int(batch.num_tracks * args.refresh_frac), 1)
-            ids = rng.choice(batch.num_tracks, size=k, replace=False)
-            for tid in ids:
-                batch.replace(int(tid), random_track(rng, args.preset, name=f"train_{it}_{tid}"))
-            hit = torch.isin(env.tid, torch.as_tensor(ids, device=env.device))
-            moved = hit.nonzero(as_tuple=False).squeeze(1)
-            env.reset(moved)
-            ppo.obs[moved] = env._observe(moved)
+            # ---- keep the circuits fresh -------------------------------------------------
+            if args.refresh_every > 0 and it % args.refresh_every == 0:
+                k = max(int(batch.num_tracks * args.refresh_frac), 1)
+                ids = rng.choice(batch.num_tracks, size=k, replace=False)
+                for tid in ids:
+                    batch.replace(int(tid), random_track(rng, args.preset, name=f"train_{it}_{tid}"))
+                hit = torch.isin(env.tid, torch.as_tensor(ids, device=env.device))
+                moved = hit.nonzero(as_tuple=False).squeeze(1)
+                env.reset(moved)
+                ppo.obs[moved] = env._observe(moved)
 
-        # ---- validation -----------------------------------------------------------------
-        if it % args.eval_every == 0 or it == it0 + 1:
-            res = evaluate(ppo.net, vp, val, "cpu", laps=2, cfg=env_cfg)
-            val_finished = sum(r.finished for r in res) / len(res)
-            # score: average speed over the distance covered, zero credit beyond 2 laps
-            val_score = float(np.mean([min(r.distance_m / (2 * r.length_m), 1.0) for r in res]))
-            lines = []
-            for r in res:
-                lap = f"{r.flying_lap:7.2f} s" if r.finished else f"-- ({r.end_reason} at {r.distance_m:.0f} m)"
-                lines.append(f"    {r.track:<22} flying lap {lap}")
-                if tb and r.finished:
-                    tb.add_scalar(f"lap/{r.track}", r.flying_lap, ppo.total_steps)
-            print(f"  validation: {val_finished * 100:.0f} % of tracks completed\n" + "\n".join(lines), flush=True)
-            flying = [r.flying_lap for r in res if r.finished]
-            score = val_score * 1000.0 - (float(np.mean(flying)) if flying else 0.0) * (val_finished == 1.0)
-            if score > best_score:
-                best_score = score
-                ppo.save(run / "best.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
+            # ---- validation -----------------------------------------------------------------
+            if it % args.eval_every == 0 or it == it0 + 1:
+                res = evaluate(ppo.net, vp, val, "cpu", laps=2, cfg=env_cfg)
+                val_finished = sum(r.finished for r in res) / len(res)
+                # score: average speed over the distance covered, zero credit beyond 2 laps
+                val_score = float(np.mean([min(r.distance_m / (2 * r.length_m), 1.0) for r in res]))
+                lines = []
+                for r in res:
+                    lap = f"{r.flying_lap:7.2f} s" if r.finished else f"-- ({r.end_reason} at {r.distance_m:.0f} m)"
+                    lines.append(f"    {r.track:<22} flying lap {lap}")
+                    if tb and r.finished:
+                        tb.add_scalar(f"lap/{r.track}", r.flying_lap, ppo.total_steps)
+                print(f"  validation: {val_finished * 100:.0f} % of tracks completed\n" + "\n".join(lines), flush=True)
+                flying = [r.flying_lap for r in res if r.finished]
+                score = val_score * 1000.0 - (float(np.mean(flying)) if flying else 0.0) * (val_finished == 1.0)
+                if score > best_score:
+                    best_score = score
+                    ppo.save(run / "best.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
 
-        # ---- logging ------------------------------------------------------------------------
-        hours = (time.time() - t_start) / 3600.0
-        cat = lambda k: torch.cat(stats[k]).mean().item() if stats[k] else float("nan")  # noqa: E731
-        row = [it, ppo.total_steps, round(hours, 4), cat("ep_return"), cat("ep_len") * env_cfg.control_dt, cat("ep_dist"),
-               stats["crashes"] / max(stats["episodes"], 1), stats["speed"] * 3.6, upd["kl"], upd["std"], upd["lr"],
-               upd["value_loss"], val_finished, val_score]
-        # Unbiased whole-fleet numbers.  (The per-episode figures above only count
-        # episodes that ENDED in this rollout, which over-represents short, crashed ones.)
-        km = max(stats["progress_m"], 1.0) / 1000.0
-        crashes_100km = stats["crashes"] / km * 100.0
-        pace = stats["progress_m"] / (args.envs * ppo_cfg.rollout_steps * env_cfg.control_dt) * 3.6
-        row += [crashes_100km, pace, stats["reward"]]
-        log.writerow([f"{v:.5g}" if isinstance(v, float) else v for v in row]); log_f.flush()
-        if tb:
-            for k, v in zip(["ep_return", "ep_len_s", "ep_dist_m", "crash_rate", "mean_speed_kmh", "kl", "std", "lr",
-                             "value_loss", "val_finished", "val_score", "crashes_per_100km", "pace_kmh",
-                             "reward_per_step"], row[3:]):
-                tb.add_scalar(f"train/{k}", v, ppo.total_steps)
-        if it % 10 == 0 or it == it0 + 1:
-            sps = (it - it0) * ppo_cfg.rollout_steps * args.envs / max(time.time() - t_start, 1e-6)
-            print(f"update {it:5d} | {ppo.total_steps / 1e6:7.1f} M decisions | {sps:,.0f}/s | "
-                  f"pace {pace:5.1f} km/h | {crashes_100km:6.1f} crashes/100 km | reward/step {stats['reward']:+.3f} | "
-                  f"ended episodes: {row[5]:6.0f} m | noise {upd['std']:.2f} | kl {upd['kl']:.4f}", flush=True)
-        if it % 25 == 0:
-            ppo.save(run / "latest.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
+            # ---- logging ------------------------------------------------------------------------
+            hours = (time.time() - t_start) / 3600.0
+            cat = lambda k: torch.cat(stats[k]).mean().item() if stats[k] else float("nan")  # noqa: E731
+            row = [it, ppo.total_steps, round(hours, 4), cat("ep_return"), cat("ep_len") * env_cfg.control_dt, cat("ep_dist"),
+                   stats["crashes"] / max(stats["episodes"], 1), stats["speed"] * 3.6, upd["kl"], upd["std"], upd["lr"],
+                   upd["value_loss"], val_finished, val_score]
+            # Unbiased whole-fleet numbers.  (The per-episode figures above only count
+            # episodes that ENDED in this rollout, which over-represents short, crashed ones.)
+            km = max(stats["progress_m"], 1.0) / 1000.0
+            crashes_100km = stats["crashes"] / km * 100.0
+            pace = stats["progress_m"] / (args.envs * ppo_cfg.rollout_steps * env_cfg.control_dt) * 3.6
+            row += [crashes_100km, pace, stats["reward"]]
+            log.writerow([f"{v:.5g}" if isinstance(v, float) else v for v in row]); log_f.flush()
+            if tb:
+                for k, v in zip(["ep_return", "ep_len_s", "ep_dist_m", "crash_rate", "mean_speed_kmh", "kl", "std", "lr",
+                                 "value_loss", "val_finished", "val_score", "crashes_per_100km", "pace_kmh",
+                                 "reward_per_step"], row[3:]):
+                    tb.add_scalar(f"train/{k}", v, ppo.total_steps)
+            if it % 10 == 0 or it == it0 + 1:
+                sps = (it - it0) * ppo_cfg.rollout_steps * args.envs / max(time.time() - t_start, 1e-6)
+                print(f"update {it:5d} | {ppo.total_steps / 1e6:7.1f} M decisions | {sps:,.0f}/s | "
+                      f"pace {pace:5.1f} km/h | {crashes_100km:6.1f} crashes/100 km | reward/step {stats['reward']:+.3f} | "
+                      f"ended episodes: {row[5]:6.0f} m | noise {upd['std']:.2f} | kl {upd['kl']:.4f}", flush=True)
+            if it % 25 == 0:
+                ppo.save(run / "latest.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
 
-        if args.iters is not None and it - it0 >= args.iters:
-            break
-        if args.steps is not None and ppo.total_steps >= args.steps:
-            break
-        if args.hours is not None and hours >= args.hours:
-            break
+            if args.iters is not None and it - it0 >= args.iters:
+                break
+            if args.steps is not None and ppo.total_steps >= args.steps:
+                break
+            if args.hours is not None and hours >= args.hours:
+                break
+    except KeyboardInterrupt:
+        print("\nstopped by user - saving the current driver", flush=True)
     ppo.save(run / "latest.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})
     log_f.close()
     print(f"done: {run}")

@@ -53,6 +53,8 @@ from mv.planning.ggv import GGV
 from mv.planning.speed_profile import lap_times, solve_speed_profile
 from mv.track.track import Track
 
+INSIDE_FRAC = 0.7      # share of the centre-line radius the line may use on the inside of a corner
+
 __all__ = ["Line", "CoarseGrid", "offset_limits", "make_grid", "centre_line", "line_from_offsets",
            "min_curvature_offsets", "min_time_offsets", "solve_box_qp", "discrete_curvature"]
 
@@ -89,9 +91,26 @@ class CoarseGrid:
 # ==========================================================================
 # Geometry helpers
 # ==========================================================================
-def offset_limits(track: Track, margin: float) -> tuple[np.ndarray, np.ndarray]:
-    """(lowest, highest) allowed offset at every station for a given edge margin."""
-    return -np.maximum(track.w_right - margin, 0.0), np.maximum(track.w_left - margin, 0.0)
+def offset_limits(track: Track, margin: float, inside_frac: float = INSIDE_FRAC) -> tuple[np.ndarray, np.ndarray]:
+    """(lowest, highest) allowed offset at every station for a given edge margin.
+
+    Two limits apply.  The obvious one: stay ``margin`` inside the track edge.
+    The subtle one: on the INSIDE of a corner the offset must stay well below
+    the centre line's radius of curvature.  At ``n = R`` all the normals of the
+    corner meet in one point (the centre of the turn); beyond it the
+    description "offset along the normal" folds over itself - and so does the
+    track's own inner edge.  That only binds where a track is wider than its
+    centre-line radius (e.g. La Source at Spa: radius 8 m, half-width 11 m);
+    there the line may use at most ``inside_frac`` of the radius.
+    """
+    lo, hi = -np.maximum(track.w_right - margin, 0.0), np.maximum(track.w_left - margin, 0.0)
+    # tightest curvature within +-5 m, so the limit does not flicker from station to station
+    k = max(int(round(5.0 / track.ds)), 1)
+    idx = (np.arange(track.n)[:, None] + np.arange(-k, k + 1)[None, :]) % track.n
+    kappa = track.kappa[idx]
+    room_left = inside_frac / np.maximum(kappa.max(1), 1e-9)       # left-hand corner: the inside is to the left
+    room_right = inside_frac / np.maximum((-kappa).max(1), 1e-9)
+    return np.maximum(lo, -room_right), np.minimum(hi, room_left)
 
 
 def make_grid(track: Track, margin: float, step_m: float = 3.0, shrink: float = 0.03) -> CoarseGrid:
@@ -258,26 +277,36 @@ def _curvature_qp(grid: CoarseGrid, alpha: np.ndarray, weight: np.ndarray | None
     return h, a.T @ (w * c)
 
 
-def min_curvature_offsets(grid: CoarseGrid, iterations: int = 6, x0: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
-    """Offsets on the coarse grid that minimise the integral of curvature squared."""
+def min_curvature_offsets(grid: CoarseGrid, iterations: int = 8, x0: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+    """Offsets on the coarse grid that minimise the integral of curvature squared.
+
+    Each round solves the quadratic programme built around the current line.
+    Because the programme is only a model of the true (non-quadratic) cost,
+    the step towards its solution is shortened if the true cost does not drop.
+    """
     def true_cost(al):
         kappa, ds = discrete_curvature(grid.p + grid.nrm * al[:, None])
         return float((kappa ** 2 * ds).sum())
 
     alpha = np.clip(np.zeros(grid.k) if x0 is None else x0, grid.lo, grid.hi)
-    best, best_cost = alpha, true_cost(alpha)
-    history = [best_cost]
+    cost = true_cost(alpha)
+    history = [cost]
     for _ in range(iterations):
         h, g = _curvature_qp(grid, alpha)
-        new, _ = solve_box_qp(h, g, grid.lo, grid.hi, alpha)
-        change = float(np.abs(new - alpha).max())
-        alpha = new
-        history.append(true_cost(alpha))
-        if history[-1] < best_cost:
-            best, best_cost = alpha, history[-1]
+        target, _ = solve_box_qp(h, g, grid.lo, grid.hi, alpha)
+        for step in (1.0, 0.5, 0.25, 0.1):
+            trial = alpha + step * (target - alpha)
+            trial_cost = true_cost(trial)
+            if trial_cost < cost:
+                break
+        else:
+            break                                          # no shorter step helps: converged
+        change = float(np.abs(trial - alpha).max())
+        alpha, cost = trial, trial_cost
+        history.append(cost)
         if change < 2e-3:
             break
-    return best, {"cost_history": history}
+    return alpha, {"cost_history": history}
 
 
 # ==========================================================================

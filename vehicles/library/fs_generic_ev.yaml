@@ -1,0 +1,88 @@
+# Generic Formula Student electric car.
+#
+# NOT any real team's car.  Every number is a typical value for the class,
+# chosen so the Formula Student-scale side of Project MV can be exercised
+# before real car data is available.  Replace with measured values for a real
+# car (copy this file, do not edit it in place).
+#
+# Rule-driven numbers (FS Rules 2027): power <= 80 kW (EV 2.2), wheelbase
+# >= 1525 mm (T 2.x).  See docs/fs-rules-dv-summary.md.
+name: fs_generic_ev
+source: "Typical Formula Student EV values (class knowledge, no specific car). All ESTIMATES."
+notes: >
+  No ABS (not usual in FS); traction control present (usual for FS EVs).
+  Single motor on the rear axle through a fixed reduction. Aero package with
+  front and rear wing. Use for development of FS-scale tracks and missions only.
+
+chassis:
+  mass_kg: 265.0                 # ESTIMATE: 190 kg car + 75 kg driver
+  yaw_inertia_kgm2: 115.0        # ESTIMATE: typical 100-130 for the class
+  wheelbase_m: 1.55              # rules minimum is 1.525
+  front_weight_frac: 0.47
+  cg_height_m: 0.29
+  track_front_m: 1.22
+  track_rear_m: 1.18
+  roll_stiffness_front_frac: 0.52
+  width_m: 1.42
+  length_m: 2.95
+
+aero:
+  cda_m2: 1.25                   # ESTIMATE: full wing package
+  cla_front_m2: 1.45             # ESTIMATE: total ClA ~3.2, 45 % front
+  cla_rear_m2: 1.75
+
+tire_front: &fs_tire
+  radius_m: 0.203                # 16x7.5-10 slick
+  mu_lat: 1.55                   # ESTIMATE: warm FS slick on good asphalt, at fz_ref
+  mu_long: 1.55
+  fz_ref_n: 650.0                # about the static corner load
+  load_exp_lat: 0.80             # FS tyres are strongly load sensitive
+  load_exp_long: 0.85
+  peak_slip_angle_deg: 9.0
+  falloff_level: 0.92
+  rolling_resistance: 0.015
+tire_rear: *fs_tire
+
+brakes:
+  max_torque_nm: 950.0           # ESTIMATE: ~1.8 g of hydraulic capacity
+  # Under 1.5-1.9 g braking ~72-75 % of the load sits on the front axle (short wheelbase,
+  # CG 0.29 m).  The bias must be at least that far forward so the FRONT wheels lock
+  # first: locked fronts run straight on, locked rears spin the car (no ABS here).
+  front_share: 0.75
+  response_time_s: 0.04
+
+steering:
+  max_wheel_angle_deg: 26.0
+  max_rate_deg_s: 90.0           # steering actuator of a driverless car
+  steering_ratio: 5.0
+  lock_deg: 130.0
+
+electronics:
+  traction_control: true
+  abs: false
+  tc_slip_limit: 0.95
+
+powertrain:
+  type: ev
+  throttle_response_time_s: 0.03
+  units:
+    - name: motor_rear
+      kind: motor
+      gearbox: reduction
+      front_frac: 0.0
+      rpm:       [0, 1000, 2000, 3000, 3300, 4000, 5000, 6000, 6500]
+      torque_nm: [230, 230, 230, 230, 230, 191, 153, 127, 117]   # 230 Nm peak, then constant 80 kW
+      rpm_max: 6500
+      max_power_kw: 80.0         # rules limit
+      efficiency: 0.92
+  gearboxes:
+    reduction:
+      ratios: [3.6]
+      final_drive: 1.0
+      efficiency: 0.97
+  battery:
+    capacity_kwh: 6.5
+    max_discharge_kw: 80.0
+    max_regen_kw: 30.0
+    soc_init: 0.95
+    soc_min: 0.05

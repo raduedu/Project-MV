@@ -69,8 +69,10 @@ def test_library_vehicle_loads_and_simulates(path):
     vp = load_vehicle(path)
     sim = VehicleSim(vp, 4, "cpu")
     ids = torch.arange(4)
-    sim.reset(ids, torch.zeros(4), torch.zeros(4), torch.zeros(4), torch.tensor([0.0, 10.0, 30.0, 60.0]))
-    steer = torch.tensor([0.0, 0.2, -0.2, 0.05])
+    from mv.vehicle.summary import top_speed
+    v_top = top_speed(vp)                                    # speeds scaled to what the car can do
+    sim.reset(ids, torch.zeros(4), torch.zeros(4), torch.zeros(4), torch.tensor([0.0, 0.12, 0.35, 0.7]) * v_top)
+    steer = torch.tensor([0.0, 0.2, -0.1, 0.02])
     for _ in range(500):                                     # 2 s of driving
         sim.step(steer, torch.ones(4) * 0.7, torch.zeros(4))
     for a in (sim.x, sim.y, sim.vx, sim.vy, sim.r, sim.soc):
@@ -128,6 +130,22 @@ def test_energy_bookkeeping(car):
     kinetic = 0.5 * car.chassis.mass_kg * float(sim.vx) ** 2
     available = sum(unit_peak_power_kw(u) for u in car.powertrain.units) * 1000.0 * t
     assert kinetic < available
+
+
+def test_car_without_abs_loses_steering_when_brakes_lock():
+    """No ABS (the generic FS car): stamping on the brakes mid-corner locks the wheels,
+    and locked wheels cannot steer - the car must run wider than with gentle braking."""
+    vp = load_vehicle(ROOT / "vehicles" / "library" / "fs_generic_ev.yaml")
+    assert not vp.electronics.abs
+    sim = VehicleSim(vp, 2, "cpu")
+    ids = torch.arange(2)
+    sim.reset(ids, torch.zeros(2), torch.zeros(2), torch.zeros(2), torch.full((2,), 12.0))    # slow enough that downforce is small
+    steer = torch.full((2,), 0.35)
+    brake = torch.tensor([1.0, 0.3])                       # car 0 stamps on the pedal, car 1 brakes gently
+    for _ in range(int(0.6 / sim.dt)):
+        sim.step(steer, torch.zeros(2), brake)
+    assert float(sim.yaw[0]) < 0.6 * float(sim.yaw[1]), "locked wheels should turn the car far less"
+    assert torch.isfinite(sim.x).all() and torch.isfinite(sim.yaw).all()
 
 
 # ---------------------------------------------------------------- tracks
