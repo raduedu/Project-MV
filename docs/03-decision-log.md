@@ -20,8 +20,10 @@ supersedes it — do not edit history.*
 | D-012 | In-game observations come from a shadow copy of the training environment | active |
 | D-013 | Combined-slip tyre model (replaces friction ellipse with force clamp) | active, supersedes part of D-004 |
 | D-014 | Episodes start at feasible speeds derived from the corners ahead | active |
-| D-015 | Optional warm start by imitating the rule-based driver | see engineering log WP9 for the experiment |
+| D-015 | Warm start by imitating the rule-based driver | active (confirmed by experiment, engineering log WP7) |
 | D-016 | Evaluation runs on the CPU | active |
+| D-017 | Physics at 125 Hz (5 sub-steps per decision) | active |
+| D-018 | Multi-car training = several single-car environments behind one interface | active |
 
 ---
 
@@ -192,11 +194,37 @@ supersedes it — do not edit history.*
 * **Why.** PPO from scratch spends tens of millions of decisions learning to
   brake for slow corners; the rule-based driver already does.
 * **Risk.** The student could inherit the teacher's caution. PPO's reward is
-  unchanged, so anything faster is still reinforced; to be confirmed by
-  experiment (engineering log WP9).
+  unchanged, so anything faster is still reinforced.
+* **Evidence (engineering log WP7).** Same 150 updates: 3/6 unseen tracks
+  completed with warm start vs 2/6 without, crash rate 31 % vs 59 %, and the
+  student was already 10 % faster than its teacher at Imola. With 16 384 cars
+  the cloned network completed 9/10 validation tracks before any PPO update.
 
 ### D-016 — Evaluation on the CPU
 
 * **Measured.** 6 cars on the GPU: 54 ms per step; on one CPU thread: 11 ms.
 * **Decision.** Timed validation laps and in-game driving run on the CPU,
   single-threaded.
+
+### D-017 — Physics at 125 Hz
+
+* **Measured.** Flying laps of the rule-based driver on six tracks at 500, 250,
+  125 and 100 Hz agree within 0.05 s (engineering log WP5); straight-line and
+  standstill behaviour identical.
+* **Decision.** 5 physics sub-steps per 25 Hz decision (was 10).
+* **Why.** Nearly doubles decisions per second (263 000/s with 16 384 cars).
+* **Revisit when** wheel-rotation states are added (tier 2): they are stiffer
+  and will need a higher rate or an implicit update.
+
+### D-018 — Multi-car training by composition
+
+* **Options.** (a) Make every physics parameter a per-car tensor inside one
+  `VehicleSim`. (b) Run one `RacingEnv` per car model and concatenate.
+* **Decision.** (b), `mv/envs/multi_car.py`.
+* **Why.** Powertrains differ in *structure* (number of units and gearboxes),
+  not only in numbers, which makes (a) invasive. (b) needed ~70 lines and no
+  change to the physics. Cost: the GPU's fixed per-step overhead is paid once
+  per car model, so three cars step about three times slower for the same fleet
+  size — acceptable for a handful of cars.
+* **Revisit when** training on dozens of car variants (then sample parameters
+  per car inside one simulator).

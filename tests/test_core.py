@@ -305,3 +305,24 @@ def test_evaluate_gives_up_on_a_driver_that_does_not_move(car):
 
     res = evaluate(Parked(), car, [circle_track()], "cpu")[0]
     assert not res.finished and res.end_reason in ("stalled", "slow")
+
+
+def test_one_driver_can_train_on_several_cars():
+    """MultiCarEnv presents several car models as one environment to PPO."""
+    from mv.envs.multi_car import MultiCarEnv
+    from mv.rl.pretrain import warm_start
+    vps = [load_vehicle(p) for p in LIBRARY]
+    tracks = TrackBatch(random_tracks(4, seed=8, cfg="mixed"), ds=1.0)
+    env = MultiCarEnv(vps, tracks, 8 * len(vps), EnvConfig(), device="cpu", seed=3)
+    obs = env.observe()
+    assert obs.shape == (env.n, env.num_obs)
+    desc = obs[:, env.obs_layout["car_desc"]]
+    assert not torch.allclose(desc[0], desc[-1]), "different cars must have different descriptors"
+    ppo = PPO(env, PPOConfig(rollout_steps=8, epochs=1, minibatches=2, hidden=(32, 32)))
+    info = warm_start(ppo, env.scripted_teacher(), steps=20, critic_updates=1, printer=lambda *_: None)
+    assert math.isfinite(info["imitation_error"])
+    ppo.collect()
+    out = ppo.update()
+    assert math.isfinite(out["value_loss"])
+    env.tracks_replaced(torch.tensor([0, 1]))
+    assert torch.isfinite(env.observe()).all()

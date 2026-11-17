@@ -336,7 +336,7 @@ Throughput after the 125 Hz change (simulation only): 147 000 decisions/s with
 | FS rules digest → `docs/fs-rules-dv-summary.md` | Opus | ✅ delivered |
 | Public-data car files → `vehicles/library/`, `docs/vehicle-data-sources.md` | Sonnet | ✅ delivered; all three load, simulate and complete laps. Estimates are marked per line; Taycan gearing/motor split and 992 gear ratios are low-confidence |
 | Live Assetto Corsa bridge → `mv/ac/bridge/`, `docs/07-…` | Opus | ✅ delivered after one interruption (usage limit) |
-| Reference lap (g-g-v + racing line) → `mv/planning/`, `docs/08-…` | Fable | 🕓 interrupted three times by the usage limit; `ggv.py`, `raceline.py`, `speed_profile.py`, `reference.py` exist but are unreviewed and the script, tests and document are missing. Resumed again |
+| Reference lap (g-g-v + racing line) → `mv/planning/`, `docs/08-…` | Fable | ✅ delivered after three interruptions (usage limit); 20 tests pass. Results and method in `08-reference-lap.md`; summary in WP11 |
 
 Lesson: helpers share the 5-hour usage limit and are cut off without warning.
 Give them exclusive files, ask them to save after every verified step, and
@@ -369,15 +369,89 @@ value is an estimate and marked as such.
 | 10.1 | Full braking in a corner *spun* the car instead of making it run straight on | First guess of 66 % front brake bias: at 1.5–1.9 g about 72–75 % of the load is on the front axle, so the rear wheels locked first | Bias set to 75 % front. This is the classic brake-balance design rule (fronts must lock first) appearing by itself in the simulator — a good sign for the tyre model |
 | 10.2 ⚠️ open | Generated "fs" tracks are faster and more flowing than real FS tracks, and have no cones | Same generator as for circuits, only scaled | Roadmap phase 6: cone-level generator with slaloms, hairpins (9 m min. diameter), ≤ 80 m straights, plus skidpad and acceleration layouts |
 
+## WP11 — Physics reference lap ✅ (helper-built; not yet independently reviewed)
+
+**Objective.** An upper yardstick: the lap time the car could theoretically
+achieve on a track, from physics alone, to grade the learned driver.
+
+**Approach** (`mv/planning`, details in `08-reference-lap.md`): g-g-v envelope
+from a steady-state four-wheel model that uses the simulator's own tyre, aero,
+load-transfer and powertrain equations → minimum-curvature racing line (QP) →
+minimum-time refinement → forward–backward speed profile on the closed lap.
+CLI: `scripts/reference_lap.py`; results in `runs/reference/`.
+
+**Verification (reported by the helper; spot checks by the lead still to do).**
+Envelope vs. `VehicleSim`: steady cornering limit within 0.1–0.3 % at
+60–200 km/h for all three cars; 0–200 km/h 10.01 s vs 10.10 s; 200–0 km/h
+112.3 m vs 113.7 m. 20 unit tests pass.
+
+**Results — flying lap, 911 GT3 RS (AC import), flat 2-D tracks**
+
+| Track | Rule-based baseline | Reference on the centre line | **Reference (best line)** | Baseline gap to reference |
+|---|---|---|---|---|
+| Imola | 2:26.6 | 2:12.4 | **1:52.0** | +31 % |
+| Monza | 2:24.2 | 2:11.0 | **1:57.9** | +22 % |
+| Spa | 3:17.0 | 2:57.0 | **2:35.8** | +26 % |
+| Mugello | 2:33.0 | 2:16.4 | **2:02.7** | +25 % |
+
+918 Spyder: 1:42.2 / 1:47.2 / 2:23.8 / 1:54.4. Taycan Turbo GT: 1:48.3 /
+1:53.2 / 2:31.3 / 1:59.6 (same track order).
+
+Reading: the racing line alone is worth 9–15 % over the centre line — the
+learned driver must leave the centre line to be competitive. After 15 minutes
+of training (verify4) it was at 2:12.1 on Imola: level with "perfect driving on
+the centre line", 18 % off the reference.
+
+**Problems & open points**
+
+| # | Item | Status |
+|---|---|---|
+| 11.1 | The reference could not be *driven* in the simulator by a simple tracking controller (lost the car on corner entry: the reference trail-brakes with the rear axle at its limit) | ⚠️ open — the reference is probably 1–2 % optimistic on corner entry; treat "within 3 %" as the realistic target |
+| 11.2 | Direct lap-time optimisation of the line (L-BFGS on a spline) failed: track-edge clipping makes the objective noisy | Replaced by a curvature QP re-weighted by measured lap-time sensitivity (gain over minimum curvature: 0.7–2.3 %) |
+| 11.3 | Minimum-curvature QP diverged at Spa's La Source (track wider than the corner radius) | Line limited to 70 % of the local radius on the inside |
+| 11.4 | Lead review of `mv/planning` code | ⚠️ open |
+
+## WP12 — One driver for several cars ✅ (mechanism only; no multi-car driver trained yet)
+
+**Approach.** `mv/envs/multi_car.py`: several single-car environments side by
+side behind one interface; the fleet is split evenly between the car models
+and all share the track pool. `scripts/train.py --vehicle a,b,c` trains one
+network on all of them; validation cycles through the cars; the warm start
+uses one rule-based teacher per car.
+
+**Verification.** `test_one_driver_can_train_on_several_cars` (3 library cars +
+FS car, warm start, PPO update, track replacement) passes; a 3-car end-to-end
+run of `train.py` on the CPU completes.
+
+**Not done.** No real multi-car training run yet — roadmap phase 4.
+
+## WP13 — First long training run 🕓 (started 2026-11-17, running detached)
+
+```
+scripts\train.py --vehicle ks_porsche_911_gt3_rs --name gt3rs_v1 --envs 16384 --tracks 512 --warm-start --minibatches 8 --eval-every 100 --hours 3
+```
+
+Output: `runs/gt3rs_v1.log` (screen output), `runs/gt3rs_v1/` (checkpoints,
+`log.csv`, TensorBoard). Process id in `runs/gt3rs_v1.pid`. To stop it early
+without losing the driver: nothing special is needed — `latest.pt` is written
+every 25 updates and `best.pt` at every validation improvement; end the Python
+process from Task Manager, then `--resume` later.
+
+| Milestone | Value |
+|---|---|
+| Straight after warm start (no PPO yet) | **9 of 10 validation tracks completed** |
+| Update 40 (39 M decisions) | pace 124.9 km/h, 13.7 crashes per 100 km (was 977 at update 1), ~96 000 decisions/s including learning |
+
+*Results of this run are to be appended here when it finishes (see next steps).*
+
 ## Next steps (in order)
 
-1. **Long training run** of the 911 GT3 RS (roadmap phase 1) and evaluation
-   against the baseline and the physics reference. Status of the run started at
-   the end of this session: see "WP11" below if present, otherwise
-   `runs/` and `docs/04-training-guide.md`.
-2. **Finish and review the reference lap** (`mv/planning`): script, tests,
-   document; then check the lead's own review of the helper's g-g-v against
-   `VehicleSim`.
+1. **Evaluate the long run** when it finishes (WP13):
+   `scripts\evaluate.py --vehicle ks_porsche_911_gt3_rs --policy runs\gt3rs_v1\best.pt --scripted`
+   (prints the gap to the reference), then `--blind` and `--grip 0.88`. Append
+   the numbers to WP13. If validation lap times were still falling at the end,
+   continue with `--resume --hours N`.
+2. **Lead review of `mv/planning`** (11.4) and a check of 11.1.
 3. **First in-game session** (needs the owner): `docs/07-assetto-corsa-bridge.md`
    checklist → `scripts/ac_bridge_check.py` → `scripts/ac_drive.py --scripted
    --dry-run` → scripted driver with `--max-kmh 80` → trained driver.

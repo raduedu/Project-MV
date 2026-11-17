@@ -32,6 +32,7 @@ Delivered (details and test evidence in `engineering-log.md`):
 * PPO learning algorithm, trainer, evaluator with plots.
 * Rule-based baseline driver (completes all test circuits in all three cars).
 * Physics reference lap (g-g-v + racing line) — see `08-reference-lap.md`.
+* Generic Formula Student EV parameter file; multi-car training mechanism.
 * Assetto Corsa live bridge (telemetry, control, resets) and driver adapter.
 * Formula Student rules digest.
 
@@ -118,7 +119,8 @@ at the level of the *trained network*, not only the code.
 
 1. **Multi-car training**: several environments (one per car, sharing the
    learner); the car descriptor in the observation tells the driver what it is
-   in. Add parameter *sampling* around each car so the driver interpolates to
+   in. *(Mechanism done: `mv/envs/multi_car.py`, `train.py --vehicle a,b,c`;
+   no multi-car driver trained yet.)* Add parameter *sampling* around each car so the driver interpolates to
    cars it has never seen. Test on a held-out car.
 2. **Gear control** as an optional third action (needed for manual-gearbox
    cars and for short-shifting on low grip).

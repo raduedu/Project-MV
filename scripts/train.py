@@ -34,6 +34,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from mv.envs.multi_car import MultiCarEnv  # noqa: E402
 from mv.envs.racing_env import EnvConfig, RacingEnv  # noqa: E402
 from mv.rl.evaluate import evaluate  # noqa: E402
 from mv.rl.ppo import PPO, PPOConfig  # noqa: E402
@@ -70,7 +71,8 @@ def keep_awake() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--vehicle", default="ks_porsche_911_gt3_rs")
+    ap.add_argument("--vehicle", default="ks_porsche_911_gt3_rs",
+                    help="car file name; several names separated by commas train ONE driver for all of them")
     ap.add_argument("--name", default=None, help="run name (folder under runs/)")
     ap.add_argument("--envs", type=int, default=4096)
     ap.add_argument("--tracks", type=int, default=256, help="size of the pool of training circuits")
@@ -99,7 +101,8 @@ def main() -> None:
         keep_awake()
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
-    vp = load_vehicle(find_vehicle(args.vehicle))
+    vps = [load_vehicle(find_vehicle(v.strip())) for v in args.vehicle.split(",") if v.strip()]
+    vp = vps[0]
     name = args.name or f"{vp.name}_{time.strftime('%Y%m%d_%H%M%S')}"
     run = ROOT / "runs" / name
     run.mkdir(parents=True, exist_ok=True)
@@ -115,7 +118,11 @@ def main() -> None:
     # reserve room for the longest circuit the generator can produce, so replacements always fit
     from mv.track.generator import PRESETS
     batch = TrackBatch(pool, device=args.device, ds=ds, min_points=int(PRESETS[args.preset].length_m[1] * 1.15 / ds))
-    env = RacingEnv(vp, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
+    if len(vps) == 1:
+        env = RacingEnv(vp, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
+    else:
+        env = MultiCarEnv(vps, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
+        args.envs = env.n
     ppo = PPO(env, ppo_cfg)
     val = validation_tracks(args.preset, args.val_tracks)
     best_score, it0 = -1e9, 0
@@ -125,7 +132,7 @@ def main() -> None:
         print(f"resumed {run / 'latest.pt'} at update {it0}, {ppo.total_steps:,} decisions")
     if args.warm_start and it0 == 0:
         print("warm start: imitating the rule-based driver ...", flush=True)
-        info = warm_start(ppo, ScriptedDriver(env), steps=args.warm_steps)
+        info = warm_start(ppo, env.scripted_teacher(), steps=args.warm_steps)
         print(f"warm start done: imitation error {info['imitation_error']:.4f}", flush=True)
     (run / "config.json").write_text(json.dumps({
         "vehicle": args.vehicle, "args": vars(args), "env": asdict(env_cfg), "ppo": asdict(ppo_cfg),
@@ -144,11 +151,13 @@ def main() -> None:
                       "mean_speed_kmh", "kl", "std", "lr", "value_loss", "val_finished", "val_score",
                       "crashes_per_100km", "pace_kmh", "reward_per_step"])
 
-    print(f"{vp.name}: {args.envs} cars, {batch.num_tracks} circuits, obs {env.num_obs}, device {args.device}")
+    print(f"{' + '.join(v.name for v in vps)}: {args.envs} cars, {batch.num_tracks} circuits, obs {env.num_obs}, "
+          f"device {args.device}")
     print(f"validation tracks: {[t.name for t in val]}")
     t_start = time.time()
     it = it0
     val_finished, val_score = float("nan"), float("nan")
+    n_evals = 0
     try:
         while True:
             it += 1
@@ -161,14 +170,16 @@ def main() -> None:
                 ids = rng.choice(batch.num_tracks, size=k, replace=False)
                 for tid in ids:
                     batch.replace(int(tid), random_track(rng, args.preset, name=f"train_{it}_{tid}"))
-                hit = torch.isin(env.tid, torch.as_tensor(ids, device=env.device))
-                moved = hit.nonzero(as_tuple=False).squeeze(1)
-                env.reset(moved)
-                ppo.obs[moved] = env._observe(moved)
+                env.tracks_replaced(torch.as_tensor(ids, device=env.device))
+                ppo.obs = env.observe()
 
             # ---- validation -----------------------------------------------------------------
             if it % args.eval_every == 0 or it == it0 + 1:
-                res = evaluate(ppo.net, vp, val, "cpu", laps=2, cfg=env_cfg)
+                val_vp = vps[n_evals % len(vps)]          # with several cars, validate them in turn
+                n_evals += 1
+                if len(vps) > 1:
+                    print(f"  validating with {val_vp.name}", flush=True)
+                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg)
                 val_finished = sum(r.finished for r in res) / len(res)
                 # score: average speed over the distance covered, zero credit beyond 2 laps
                 val_score = float(np.mean([min(r.distance_m / (2 * r.length_m), 1.0) for r in res]))

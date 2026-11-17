@@ -306,6 +306,15 @@ class RacingEnv:
     def observe(self) -> torch.Tensor:
         return self._observe(torch.arange(self.n, device=self.device))
 
+    def tracks_replaced(self, track_ids: torch.Tensor) -> None:
+        """Restart every car that was driving on a track that has just been swapped out."""
+        self.reset(torch.isin(self.tid, track_ids).nonzero(as_tuple=False).squeeze(1))
+
+    def scripted_teacher(self):
+        """The rule-based driver for this car (used by the warm start)."""
+        from mv.control.scripted import ScriptedDriver
+        return ScriptedDriver(self)
+
     def step(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Returns (obs, reward, terminated, truncated, info).
 
