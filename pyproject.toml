@@ -3,6 +3,9 @@ name = "project-mv"
 version = "0.1.0"
 description = "Project MV - a modular, car-agnostic autonomous racing driver trained by reinforcement learning"
 requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "Edu Radu-Ștefan" }]
 dependencies = ["numpy", "scipy", "pyyaml", "torch", "matplotlib"]
 
 [project.optional-dependencies]

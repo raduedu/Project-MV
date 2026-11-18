@@ -119,9 +119,20 @@ runs/         training output (git-ignored)
 docs/         documentation
 ```
 
-## Data and ownership
+## License and ownership
 
-Code and documentation in this repository belong to the project owner.
-Assetto Corsa car and track data are read from the owner's own installation
-and are deliberately **not** stored in the repository (`vehicles/local`,
-`tracks/local`, `.cache` are git-ignored) — do not commit or share them.
+Copyright © 2026 Edu Radu-Ștefan.
+
+Project MV is free software, licensed under the **GNU Affero General Public
+License v3.0 only** (AGPL-3.0-only) — see [`LICENSE`](LICENSE). In short: you
+may use, study, modify and share it, but if you distribute a modified version
+or run one as a network service, you must make its complete source code
+available under the same license. For use under different terms (for example
+in a closed-source or commercial product), contact the author for a separate
+license.
+
+Third-party libraries (PyTorch, NumPy, SciPy, PyYAML, Matplotlib) keep their
+own licenses. Assetto Corsa car and track data are read from the user's own
+installation and are deliberately **not** part of this repository
+(`vehicles/local`, `tracks/local`, `.cache` are git-ignored) — they belong to
+Kunos Simulazioni and must not be committed or shared.
