@@ -96,6 +96,8 @@ def main() -> None:
     ap.add_argument("--blind", action="store_true", help="short track preview, as on a first lap of an unknown track")
     ap.add_argument("--grip", type=float, default=1.0, help="tyre grip multiplier")
     ap.add_argument("--no-plots", action="store_true")
+    ap.add_argument("--no-save-laps", action="store_true",
+                    help="do not save the fastest flying lap of each driver per track for replay (runs/laps)")
     ap.add_argument("--out", type=Path, default=ROOT / "runs" / "eval")
     args = ap.parse_args()
     if args.policy is None and not args.scripted:
@@ -124,8 +126,19 @@ def main() -> None:
     all_res: dict[str, list[LapResult]] = {}
     for name, drv in drivers.items():
         print(f"running {name} driver on {len(tracks)} tracks ...", flush=True)
-        all_res[name] = evaluate(drv, vp, tracks, "cpu", laps=args.laps, cfg=cfg, record=not args.no_plots,
-                                 blind=args.blind, grip=args.grip)
+        all_res[name] = evaluate(drv, vp, tracks, "cpu", laps=args.laps, cfg=cfg,
+                                 record=not (args.no_plots and args.no_save_laps), blind=args.blind, grip=args.grip)
+        if not args.no_save_laps:
+            from mv.laps import laps_from_result, save_lap
+            label = "rule-based driver" if name == "scripted" else f"{args.policy.parent.name} ({args.policy.stem})"
+            cond = " ".join(x for x in ("blind" if args.blind else "", f"grip x{args.grip:g}" if args.grip != 1 else "") if x)
+            for r, t in zip(all_res[name], tracks):
+                laps = laps_from_result(r, t, vp.name, label + (f" [{cond}]" if cond else ""),
+                                        "rule-based" if name == "scripted" else "learned",
+                                        "scripts/evaluate.py" + (f" ({cond})" if cond else ""),
+                                        "" if name == "scripted" else str(args.policy).replace(chr(92), "/"))
+                if laps:
+                    save_lap(min(laps, key=lambda l: l["meta"]["lap_time"]))
 
     print(f"\n{vp.name}" + ("  [blind preview]" if args.blind else "") + (f"  [grip x{args.grip}]" if args.grip != 1 else ""))
     header = f"{'track':<24}{'length':>8}  " + "  ".join(f"{n + ' standing':>18}{n + ' flying':>16}{'vmax':>6}{'off':>5}" for n in drivers)

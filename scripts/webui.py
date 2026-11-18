@@ -367,6 +367,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(run_details(name))
             if p == "/api/tasks":
                 return self._json(task_list())
+            if p == "/api/laps":
+                from mv.laps import list_laps
+                return self._json(list_laps())
+            if p in ("/api/lap", "/api/lap.csv"):
+                from mv.laps import lap_to_csv, load_lap
+                key = parse_qs(u.query).get("key", [""])[0]
+                lap = load_lap(key)
+                if p == "/api/lap":
+                    return self._json(lap)
+                body = lap_to_csv(lap).encode()
+                fname = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{lap['meta']['track']}_{lap['meta']['driver']}_{lap['meta']['lap_time']}.csv")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv")
+                self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if p.startswith("/files/"):
                 rel = unquote(p[len("/files/"):])
                 f = (ROOT / rel).resolve()

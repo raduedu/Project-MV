@@ -47,7 +47,9 @@ def car():
 
 def quiet_config(**kw) -> EnvConfig:
     """Environment config without randomness, for repeatable tests."""
-    return eval_config(EnvConfig(**kw), max_time_s=kw.get("max_episode_s", 600.0))
+    from dataclasses import replace
+    # eval_config is strict (no rejoining); settings given explicitly by a test win
+    return replace(eval_config(EnvConfig(**kw), max_time_s=kw.get("max_episode_s", 600.0)), **kw)
 
 
 # ---------------------------------------------------------------- data import

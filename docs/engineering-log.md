@@ -880,3 +880,29 @@ interface that keeps running when the browser tab is closed.
 | 24.2 | Two tasks started in the same second shared one ID and one log | Millisecond suffix + collision check |
 | 24.3 | **Stopping the web server would have stopped training** if Resume had been pressed in the page (the supervisor is then a child of the server, and stop killed the whole process tree) | Stop ends only the server process; verified by test |
 | 24.4 | Charts noisy; crash axis went below zero | Running-average line over the raw data; zero floor |
+
+## WP25 — Recorded laps, replay viewer, strict evaluation ✅
+
+**Objective (owner).** Make results visual and verifiable: record fastest laps
+and let anyone watch them.
+
+**Approach.** `mv/laps.py`: full lap telemetry (25 Hz: position, heading, speed,
+steering, throttle, brake, gear, distance) + provenance, saved in `runs/laps`;
+physics reference laps converted to the same format ("ideal ghost").
+Training validation saves each run's record laps automatically;
+`scripts/evaluate.py` saves its laps. Web UI: **Laps** tab (track map with
+speed-coloured racing line, chase camera, live HUD, ghost with live gap, speed
+trace, CSV download, provenance) and a **Fastest laps** table on the dashboard.
+`scripts/make_example_laps.py` publishes example laps (`docs/laps`) and the
+README animation — generated circuits and public car files only.
+`scripts/record_reference_laps.py` adds reference laps for any car.
+
+**Findings (important).**
+
+| # | Finding | Action |
+|---|---|---|
+| 25.1 | Evaluations of the limit-seeking driver let it rejoin after going off; strictly it completed only **2/5 real** and 7/12 generated circuits (v4/v5: 5/5 and 12/12) | `eval_config` is now strict (`recover_on_crash=False`); its 5 non-strict laps moved to `runs/laps_retracted_nonstrict` |
+| 25.2 | Single-car drivers fail completely on another car file (v4/v5 with the public 992: **0/6**), most likely because the car-descriptor inputs never varied in training | Multi-car training (`multi_v1`, paused at 88 %); randomise descriptor-related parameters next |
+| 25.3 | Clean best laps (v5, strict): Imola 1:58.1 (+5.4 %), RBR 1:42.3 (+3.9 %), Monza 2:02.9 (+4.3 %), Mugello 2:08.5 (+4.8 %), Spa 2:42.5 (+4.3 %) vs physics ideal; FS car 8/8 generated FS circuits | Recorded as replayable laps |
+
+**Plain-language overview for presenting the project:** `docs/00-project-explained.md`.

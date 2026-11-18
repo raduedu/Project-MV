@@ -60,6 +60,31 @@ def validation_tracks(preset: str, count: int) -> list[Track]:
     return tracks
 
 
+def save_record_laps(res, tracks, vp, run_name: str, it: int, best: dict) -> None:
+    """Save the full telemetry of a lap whenever this run beats its own record on a real circuit.
+
+    Only imported circuits (tracks/local) - the random validation circuits change
+    meaning between presets.  Lap files go to runs/laps (see mv/laps.py) and can
+    be replayed in the web interface.
+    """
+    from mv.laps import best_lap_time, laps_from_result, save_lap
+    for r, t in zip(res, tracks):
+        if not r.finished or t.name.startswith("val_random"):
+            continue
+        key = (vp.name, t.name)
+        if key not in best:
+            best[key] = best_lap_time(vp.name, t.name, run_name)
+        laps = laps_from_result(r, t, vp.name, run_name, "learned",
+                                f"training validation of {run_name}, update {it}", f"runs/{run_name}/eval_{it:05d}.pt")
+        if laps:
+            lap = min(laps, key=lambda l: l["meta"]["lap_time"])
+            if lap["meta"]["lap_time"] < best[key] - 1e-3:
+                save_lap(lap)
+                best[key] = lap["meta"]["lap_time"]
+                print(f"    new record lap for {run_name} at {t.name}: {lap['meta']['lap_time']:.3f} s (saved for replay)",
+                      flush=True)
+
+
 def load_grown(net, state: dict) -> None:
     """Load a driver's weights, allowing the new observation to have EXTRA inputs at the end.
 
@@ -247,6 +272,7 @@ def main() -> None:
     t_start = time.time()
     it = it0
     val_finished, val_score = float("nan"), float("nan")
+    record_laps: dict[tuple[str, str], float] = {}     # (car, track) -> this run's fastest saved lap
     n_evals = 0
     paused = False
     hours = hours_before
@@ -271,7 +297,8 @@ def main() -> None:
                 n_evals += 1
                 if len(vps) > 1:
                     print(f"  validating with {val_vp.name}", flush=True)
-                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg)
+                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg, record=True)
+                save_record_laps(res, val, val_vp, name, it, record_laps)
                 val_finished = sum(r.finished for r in res) / len(res)
                 # score: average speed over the distance covered, zero credit beyond 2 laps
                 val_score = float(np.mean([min(r.distance_m / (2 * r.length_m), 1.0) for r in res]))

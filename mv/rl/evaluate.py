@@ -41,10 +41,15 @@ class LapResult:
 
 
 def eval_config(base: EnvConfig | None = None, max_time_s: float = 900.0) -> EnvConfig:
-    """The training config with every source of randomness switched off."""
+    """The training config with every source of randomness switched off - and strict.
+
+    Strict means: leaving the track ends the run, even for drivers trained in
+    limit-seeking mode (where training lets the car rejoin).  So "completed" and
+    every recorded lap time always mean a CLEAN lap (engineering log WP25).
+    """
     one = (1.0, 1.0)
     return replace(base or EnvConfig(), blind_prob=0.0, rand_grip=one, rand_mass=one, rand_power=one,
-                   rand_aero=one, max_episode_s=max_time_s, standing_start_prob=0.0)
+                   rand_aero=one, max_episode_s=max_time_s, standing_start_prob=0.0, recover_on_crash=False)
 
 
 @torch.no_grad()
@@ -90,7 +95,10 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
     dist = torch.zeros(n, device=env.device)
     vmax = torch.zeros(n, device=env.device)
     off_steps = torch.zeros(n, dtype=torch.long, device=env.device)
-    traces: list[dict[str, list]] = [dict(t=[], x=[], y=[], speed=[], steer=[], pedal=[], lat=[]) for _ in range(n)]
+    # Full telemetry for lap replays (mv/laps.py): what the car did and what it actually
+    # received (steering/throttle/brake after the actuators), 25 times per second.
+    fields = ("t", "s", "x", "y", "yaw", "speed", "steer", "thr", "brk", "gear", "pedal", "lat")
+    traces: list[dict[str, list]] = [{f: [] for f in fields} for _ in range(n)]
     obs = env.observe()
     max_steps = int(cfg.max_episode_s / cfg.control_dt)
     for _step in range(max_steps):
@@ -104,12 +112,15 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
         over = torch.maximum(env.lat - env.w_left, -env.lat - env.w_right) + env.half_width
         off_steps += (live & (over > 0)).long()
         if record:
-            a = action.clamp(-1, 1)
+            sim = env.sim
+            snap = {"t": env.t_ep, "s": env.s_total, "x": sim.x, "y": sim.y, "yaw": sim.yaw, "speed": info["speed"],
+                    "steer": sim.steer / sim.steer_max, "thr": sim.thr, "brk": sim.brk, "gear": sim.gear[:, 0] + 1,
+                    "pedal": action.clamp(-1, 1)[:, 1], "lat": env.lat}
+            snap = {k: v.detach().cpu().numpy() for k, v in snap.items()}
             for i in live.nonzero().flatten().tolist():
                 tr = traces[i]
-                tr["t"].append(float(env.t_ep[i])); tr["x"].append(float(env.sim.x[i])); tr["y"].append(float(env.sim.y[i]))
-                tr["speed"].append(float(info["speed"][i])); tr["steer"].append(float(a[i, 0]))
-                tr["pedal"].append(float(a[i, 1])); tr["lat"].append(float(env.lat[i]))
+                for f in fields:
+                    tr[f].append(float(snap[f][i]))
         for i in (active & info["lap_done"] & ~done).nonzero().flatten().tolist():
             lap_times[i].append(float(info["lap_time"][i]))
             if len(lap_times[i]) >= laps:

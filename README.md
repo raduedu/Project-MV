@@ -9,6 +9,10 @@ Corsa, and headed for a Formula Student Driverless car.
   circuits are only used for testing.
 * **Nothing but racing** — the single objective is lap time within track limits.
 
+![A trained driver lapping a generated circuit against the physics-perfect lap](docs/img/lap_replay.gif)
+
+**New here? Read [`docs/00-project-explained.md`](docs/00-project-explained.md)** - what the project is, how it works and what it has achieved, in plain language.
+
 Start with [`docs/01-architecture.md`](docs/01-architecture.md). The running
 diary of what was tried, what worked and what did not is
 [`docs/engineering-log.md`](docs/engineering-log.md).
