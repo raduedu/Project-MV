@@ -145,40 +145,7 @@ a.b { color: var(--ink); display: inline-block; }
     <div class="hint">Every lap here was driven in the simulator and recorded 25 times per second; "physics reference" is the
       ideal lap computed from physics. <b>Watch</b> replays a lap, <b>Ghost</b> races a second lap against it.</div>
   </div>
-  <div class="card" id="viewer">
-    <h2 id="v_title">Choose a lap above</h2>
-    <div class="replay">
-      <div>
-        <div class="mapwrap"><canvas id="map"></canvas></div>
-        <div class="controls">
-          <button class="b primary" id="v_play">&#9654; Play</button>
-          <select id="v_speed" style="width:auto"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option><option value="8">8x</option></select>
-          <input type="range" id="v_scrub" min="0" max="1000" value="0">
-          <label style="margin:0;display:flex;align-items:center;color:var(--ink)"><input type="checkbox" id="v_loop" checked>loop</label>
-          <a id="v_csv" class="b" style="text-decoration:none" href="#">Download data (CSV)</a>
-        </div>
-        <div class="row" style="margin-top:8px;align-items:center"><span class="hint" style="flex:0;white-space:nowrap;margin:0">slow</span><div class="speedkey"></div><span class="hint" style="flex:0;white-space:nowrap;margin:0">fast</span></div>
-      </div>
-      <div>
-        <div class="mapwrap" id="zoomwrap"><canvas id="zoom"></canvas></div>
-        <div class="hud">
-          <div><div class="lbl">lap time</div><div class="big" id="h_time">0:00.000</div></div>
-          <div><div class="lbl">speed km/h</div><div class="big" id="h_speed">0</div></div>
-          <div><div class="lbl">gap to ghost</div><div class="big delta" id="h_delta">-</div></div>
-          <div><div class="lbl">gear</div><div class="big" id="h_gear">-</div></div>
-          <div><div class="lbl">throttle / brake</div>
-            <div class="pedals"><div class="pedal"><div id="h_thr" style="background:var(--ok);height:0"></div></div>
-                                <div class="pedal"><div id="h_brk" style="background:var(--bad);height:0"></div></div></div></div>
-          <div><div class="lbl">steering</div><div style="padding-top:6px"><div class="wheel" id="h_wheel"></div></div></div>
-        </div>
-      </div>
-    </div>
-    <h3>Speed along the lap (km/h)</h3>
-    <canvas id="v_speedchart" style="width:100%;height:170px"></canvas>
-    <div class="legend" id="v_legend"></div>
-    <h3>Where this lap comes from</h3>
-    <pre id="v_meta"></pre>
-  </div>
+  <div class="card" id="viewer"><div id="replay"></div></div>
 </section>
 
 <!-- ======================= PLAN ======================= -->
@@ -296,6 +263,7 @@ a.b { color: var(--ink); display: inline-block; }
 </main>
 <div class="toast" id="toast"></div>
 
+<script src="/replay.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const api = async (path, body) => {
@@ -491,7 +459,7 @@ async function loadRun() {
 // ======================================================================
 // LAPS: list, fastest-laps card, replay viewer
 // ======================================================================
-let laps = [], lapA = null, lapB = null, play = false, T = 0, lastFrame = 0, mapLayer = null, mapXf = null, speedBase = null;
+let laps = [];
 const kindLabel = {learned: "learned", reference: "physics reference", "rule-based": "rule-based"};
 async function loadLaps() { try { laps = await api("/api/laps"); } catch (e) { return; } fillLapFilters(); drawLapList(); drawFastest(); }
 function fillLapFilters() {
@@ -504,12 +472,12 @@ function drawLapList() {
   const sel = laps.filter(l => l.track === $("#l_track").value && l.car === $("#l_car").value).sort((a, b) => a.lap_time - b.lap_time);
   const best = sel.length ? sel[0].lap_time : 0;
   $("#laplist").innerHTML = `<tr><th>Driver</th><th>Kind</th><th>Lap</th><th>Gap</th><th>Avg</th><th>Recorded</th><th></th></tr>` + sel.map(l =>
-    `<tr class="${lapA && lapA.meta.key === l.key ? "sel" : ""}"><td><b>${esc(l.driver)}</b>${l.origin === "example" ? ' <span class="hint">(example)</span>' : ""}</td>
+    `<tr class="${viewer && viewer.lap && viewer.lap.meta.key === l.key ? "sel" : ""}"><td><b>${esc(l.driver)}</b>${l.origin === "example" ? ' <span class="hint">(example)</span>' : ""}</td>
      <td><span class="kind ${l.kind}">${kindLabel[l.kind] || l.kind}</span></td><td style="font-family:var(--mono)">${lap(l.lap_time)}</td>
      <td style="font-family:var(--mono)">${l.lap_time === best ? "-" : "+" + (l.lap_time - best).toFixed(3)}</td><td>${l.avg_kmh} km/h</td>
      <td class="hint">${esc(l.created)}</td>
      <td style="white-space:nowrap;text-align:right"><button class="b s" onclick="watchLap('${l.key}')">Watch</button>
-       <button class="b s" ${lapA ? "" : "disabled"} onclick="ghostLap('${l.key}')">Ghost</button></td></tr>`).join("");
+       <button class="b s" ${viewer && viewer.lap ? "" : "disabled"} onclick="ghostLap('${l.key}')">Ghost</button></td></tr>`).join("");
 }
 function drawFastest() {
   if (!laps.length) return;
@@ -524,182 +492,43 @@ function drawFastest() {
   });
   $("#fastest").innerHTML = `<table><tr><th>Track</th><th>Best learned driver</th><th>Physics reference (ideal)</th><th>Rule-based driver</th><th>Learned vs ideal</th></tr>${rows.join("")}</table>`;
 }
+let viewer = null;
+function getViewer() {
+  if (!viewer) viewer = MVReplay.create($("#replay"), {
+    csvHref: l => "/api/lap.csv?key=" + encodeURIComponent(l.meta.key),
+    onReproduce: l => act("/api/reproduce", {key: l.meta.key}).then(() => { show("tools"); }),
+  });
+  return viewer;
+}
+const fetchLap = async key => { const l = await api("/api/lap?key=" + encodeURIComponent(key)); l.meta.key = key; return l; };
 async function watchLap(key, ghostKey) {
   show("laps");
   const l = laps.find(x => x.key === key);
   if (l) { $("#l_track").value = l.track; $("#l_car").value = l.car; }
-  lapA = prep(await api("/api/lap?key=" + encodeURIComponent(key)), key);
-  lapB = null;
-  if (ghostKey) lapB = prep(await api("/api/lap?key=" + encodeURIComponent(ghostKey)), ghostKey);
-  else {   // default ghost: the physics reference on this track/car, if there is one
-    const ref = laps.filter(x => x.track === lapA.meta.track && x.car === lapA.meta.car && x.kind === "reference" && x.key !== key)
+  const A = await fetchLap(key);
+  if (!ghostKey) {   // default ghost: the physics reference for this car and track, if there is one
+    const ref = laps.filter(x => x.track === A.meta.track && x.car === A.meta.car && x.kind === "reference" && x.key !== key)
                     .sort((a, b) => a.lap_time - b.lap_time)[0];
-    if (ref) lapB = prep(await api("/api/lap?key=" + encodeURIComponent(ref.key)), ref.key);
+    if (ref) ghostKey = ref.key;
   }
-  startViewer();
+  const B = ghostKey ? await fetchLap(ghostKey) : null;
+  getViewer().load(A, B);
+  history.replaceState(null, "", "#lap=" + encodeURIComponent(key) + (ghostKey ? "&ghost=" + encodeURIComponent(ghostKey) : ""));
+  drawLapList();
   document.querySelector("#viewer").scrollIntoView({behavior: "smooth"});
 }
-async function ghostLap(key) { if (!lapA) return; lapB = prep(await api("/api/lap?key=" + encodeURIComponent(key)), key); startViewer(true); }
-function prep(lp, key) {
-  lp.meta.key = key;
-  const s = lp.samples; let m = 0;
-  s.sm = s.s.map(v => (m = Math.max(m, v)));          // distance, never decreasing
-  return lp;
+async function ghostLap(key) {
+  const v = getViewer(); if (!v.lap) return;
+  v.load(v.lap, await fetchLap(key), true);
+  history.replaceState(null, "", "#lap=" + encodeURIComponent(v.lap.meta.key) + "&ghost=" + encodeURIComponent(key));
 }
-function startViewer(keepTime) {
-  drawLapList();
-  const m = lapA.meta;
-  $("#v_title").innerHTML = `${esc(m.driver)} &middot; ${esc(m.track)} &middot; <span style="font-family:var(--mono)">${lap(m.lap_time)}</span>` +
-    (lapB ? ` <span class="muted" style="font-weight:400">vs ghost: ${esc(lapB.meta.driver)} ${lap(lapB.meta.lap_time)}</span>` : "");
-  $("#v_csv").href = "/api/lap.csv?key=" + encodeURIComponent(m.key);
-  $("#v_meta").textContent = [lapA, lapB].filter(Boolean).map(l => Object.entries(l.meta).filter(([k]) => !["key", "id"].includes(k))
-    .map(([k, v]) => `${k.padEnd(15)} ${v}`).join("\n")).join("\n\n--- ghost ---\n");
-  mapLayer = null;
-  if (!keepTime) T = 0;
-  drawSpeedChart(); frame();
+async function openFromHash() {        // links like  http://127.0.0.1:8765/#lap=...&ghost=...
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("lap")) { await loadLaps(); watchLap(h.get("lap"), h.get("ghost") || undefined); }
 }
-$("#v_play").onclick = () => {
-  if (!lapA) return;
-  play = !play; $("#v_play").innerHTML = play ? "&#10074;&#10074; Pause" : "&#9654; Play"; lastFrame = performance.now();
-  if (play) requestAnimationFrame(loop);
-};
-$("#v_scrub").oninput = e => { if (lapA) { T = e.target.value / 1000 * lapA.meta.lap_time; frame(); } };
-function loop(now) {
-  if (!play || !lapA) return;
-  T += (now - lastFrame) / 1000 * parseFloat($("#v_speed").value); lastFrame = now;
-  if (T > lapA.meta.lap_time) {
-    if ($("#v_loop").checked) T = 0; else { T = lapA.meta.lap_time; play = false; $("#v_play").innerHTML = "&#9654; Play"; }
-  }
-  frame(); requestAnimationFrame(loop);
-}
-// state of a lap at time t (linear interpolation between samples)
-function at(lp, t) {
-  const ts = lp.samples.t; let lo = 0, hi = ts.length - 1;
-  if (t <= ts[0]) return interp(lp, 0, 0);
-  if (t >= ts[hi]) return interp(lp, hi, 0);
-  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ts[mid] <= t) lo = mid; else hi = mid; }
-  return interp(lp, lo, (t - ts[lo]) / (ts[hi] - ts[lo]));
-}
-function interp(lp, i, f) {
-  const s = lp.samples, j = Math.min(i + 1, s.t.length - 1), L = k => s[k][i] + (s[k][j] - s[k][i]) * f;
-  let dyaw = s.yaw[j] - s.yaw[i]; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
-  return {x: L("x"), y: L("y"), yaw: s.yaw[i] + dyaw * f, speed: L("speed"), steer: L("steer"), thr: L("thr"), brk: L("brk"),
-          gear: s.gear[i], s: s.sm[i] + (s.sm[j] - s.sm[i]) * f};
-}
-// time at which a lap reached distance d along the track
-function timeAt(lp, d) {
-  const s = lp.samples, sm = s.sm; let lo = 0, hi = sm.length - 1;
-  if (d <= sm[0]) return s.t[0];
-  if (d >= sm[hi]) return s.t[hi];
-  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (sm[mid] <= d) lo = mid; else hi = mid; }
-  const f = (d - sm[lo]) / Math.max(sm[hi] - sm[lo], 1e-6);
-  return s.t[lo] + (s.t[hi] - s.t[lo]) * f;
-}
-const speedColor = (v, v0, v1) => `hsl(${230 - 230 * Math.max(0, Math.min(1, (v - v0) / Math.max(v1 - v0, 1)))},85%,55%)`;
-function sizeCanvas(c) {
-  const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1;
-  if (c.width !== Math.round(r.width * d) || c.height !== Math.round(r.height * d)) { c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); }
-  return [c.width, c.height, d];
-}
-function trackPaths(ctx, tk, P, d) {
-  const ring = pts => { ctx.moveTo(...P(pts[0])); for (let i = 1; i < pts.length; i++) ctx.lineTo(...P(pts[i])); ctx.closePath(); };
-  ctx.beginPath(); ring(tk.left); ring(tk.right); ctx.fillStyle = "#3b4049"; ctx.fill("evenodd");
-  ctx.strokeStyle = "#cfd5de"; ctx.lineWidth = 1.2 * d;
-  ctx.beginPath(); ring(tk.left); ctx.stroke(); ctx.beginPath(); ring(tk.right); ctx.stroke();
-  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3 * d; ctx.beginPath(); ctx.moveTo(...P(tk.left[0])); ctx.lineTo(...P(tk.right[0])); ctx.stroke();
-}
-function racingLine(ctx, lp, P, width, alpha) {
-  const s = lp.samples, v0 = Math.min(...s.speed), v1 = Math.max(...s.speed);
-  ctx.lineWidth = width; ctx.globalAlpha = alpha; ctx.lineCap = "round";
-  for (let i = 1; i < s.x.length; i++) {
-    ctx.strokeStyle = speedColor(s.speed[i], v0, v1);
-    ctx.beginPath(); ctx.moveTo(...P([s.x[i - 1], s.y[i - 1]])); ctx.lineTo(...P([s.x[i], s.y[i]])); ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-}
-function frame() {
-  if (!lapA) return;
-  const tk = lapA.track, a = at(lapA, T), b = lapB ? at(lapB, T) : null;
-  // ---- whole-track map (static part cached) ----
-  const map = $("#map"), [W, H, d] = sizeCanvas(map), ctx = map.getContext("2d");
-  if (!mapLayer || mapLayer.width !== W || mapLayer.height !== H) {
-    const pts = tk.left.concat(tk.right), xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    const k = Math.min((W - 40 * d) / (x1 - x0), (H - 40 * d) / (y1 - y0));
-    const ox = (W - (x1 - x0) * k) / 2, oy = (H - (y1 - y0) * k) / 2;
-    mapXf = p => [ox + (p[0] - x0) * k, H - oy - (p[1] - y0) * k];
-    mapLayer = document.createElement("canvas"); mapLayer.width = W; mapLayer.height = H;
-    const c2 = mapLayer.getContext("2d");
-    trackPaths(c2, tk, mapXf, d);
-    if (lapB) {
-      const s = lapB.samples; c2.setLineDash([4 * d, 4 * d]); c2.strokeStyle = "rgba(255,255,255,.5)"; c2.lineWidth = 1.2 * d;
-      c2.beginPath(); c2.moveTo(...mapXf([s.x[0], s.y[0]])); for (let i = 1; i < s.x.length; i++) c2.lineTo(...mapXf([s.x[i], s.y[i]])); c2.stroke(); c2.setLineDash([]);
-    }
-    racingLine(c2, lapA, mapXf, 2.6 * d, 1);
-  }
-  ctx.clearRect(0, 0, W, H); ctx.drawImage(mapLayer, 0, 0);
-  const dot = (p, col, r) => {
-    const [x, y] = mapXf([p.x, p.y]); ctx.fillStyle = col; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2 * d;
-    ctx.beginPath(); ctx.arc(x, y, r * d, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(p.yaw) * 16 * d, y - Math.sin(p.yaw) * 16 * d); ctx.stroke();
-  };
-  if (b) dot(b, "rgba(160,170,185,.95)", 5);
-  dot(a, "#d5001c", 6.5);
-  // ---- chase view: 140 m across, the car always pointing up ----
-  const z = $("#zoom"), [ZW, ZH, zd] = sizeCanvas(z), zc = z.getContext("2d"), zk = ZW / 140;
-  zc.setTransform(1, 0, 0, 1, 0, 0); zc.fillStyle = "#1d2b1f"; zc.fillRect(0, 0, ZW, ZH);
-  zc.translate(ZW / 2, ZH * 0.62); zc.rotate(a.yaw - Math.PI / 2);
-  const ZP = p => [(p[0] - a.x) * zk, -(p[1] - a.y) * zk];
-  trackPaths(zc, tk, ZP, zd); racingLine(zc, lapA, ZP, 3 * zd, 0.85);
-  const car = (p, col) => {
-    zc.save(); zc.translate(...ZP([p.x, p.y])); zc.rotate(-p.yaw);
-    zc.fillStyle = col; zc.fillRect(-2.3 * zk, -0.97 * zk, 4.6 * zk, 1.94 * zk);
-    zc.fillStyle = "rgba(255,255,255,.85)"; zc.fillRect(0.9 * zk, -0.7 * zk, 0.9 * zk, 1.4 * zk);   // windscreen = front
-    zc.restore();
-  };
-  if (b) car(b, "rgba(170,180,195,.75)");
-  car(a, "#d5001c");
-  zc.setTransform(1, 0, 0, 1, 0, 0);
-  // ---- dashboard ----
-  $("#h_time").textContent = lap(T); $("#h_speed").textContent = Math.round(a.speed * 3.6); $("#h_gear").textContent = a.gear || "-";
-  $("#h_thr").style.height = (a.thr * 100).toFixed(0) + "%"; $("#h_brk").style.height = (a.brk * 100).toFixed(0) + "%";
-  $("#h_wheel").style.transform = `rotate(${(-a.steer * 220).toFixed(1)}deg)`;
-  const del = $("#h_delta");
-  if (lapB) {
-    const g = T - timeAt(lapB, a.s);             // + = behind the ghost at the same point of the track
-    del.textContent = (g > 0 ? "+" : "") + g.toFixed(2) + " s"; del.className = "big delta " + (g > 0.005 ? "behind" : "ahead");
-  } else { del.textContent = "-"; del.className = "big delta"; }
-  $("#v_scrub").value = Math.round(T / lapA.meta.lap_time * 1000);
-  drawSpeedCursor(a.s);
-}
-function drawSpeedChart() {
-  const c = $("#v_speedchart"), [W, H, d] = sizeCanvas(c);
-  speedBase = document.createElement("canvas"); speedBase.width = W; speedBase.height = H;
-  const g = speedBase.getContext("2d"), L = lapA.meta.track_length_m, series = [lapA, lapB].filter(Boolean);
-  const vmax = Math.max(...series.map(l => Math.max(...l.samples.speed))) * 3.6 * 1.05;
-  const X = s => 40 * d + s / L * (W - 50 * d), Y = v => H - 18 * d - v / vmax * (H - 28 * d);
-  g.font = `${11 * d}px Segoe UI`; g.fillStyle = "#8a93a5"; g.strokeStyle = "rgba(128,128,128,.2)";
-  for (let v = 0; v < vmax; v += 50) { g.beginPath(); g.moveTo(X(0), Y(v)); g.lineTo(X(L), Y(v)); g.stroke(); g.fillText(v, 6 * d, Y(v) + 4 * d); }
-  g.fillText("distance along the lap  ->", X(L) - 150 * d, H - 3 * d);
-  series.slice().reverse().forEach(lp => {
-    const ghost = lp === lapB; g.strokeStyle = ghost ? "rgba(160,170,185,.9)" : "#d5001c"; g.lineWidth = (ghost ? 1.4 : 2) * d; g.beginPath();
-    lp.samples.sm.forEach((s, i) => { const p = [X(s), Y(lp.samples.speed[i] * 3.6)]; i ? g.lineTo(...p) : g.moveTo(...p); }); g.stroke();
-  });
-  speedBase._X = X;
-  $("#v_legend").innerHTML = `<span><i style="background:#d5001c"></i>${esc(lapA.meta.driver)}</span>` +
-    (lapB ? `<span><i style="background:#a0aab9"></i>${esc(lapB.meta.driver)} (ghost)</span>` : "");
-}
-function drawSpeedCursor(s) {
-  if (!speedBase) return;
-  const c = $("#v_speedchart"), ctx = c.getContext("2d");
-  ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(speedBase, 0, 0);
-  const x = speedBase._X(s); ctx.strokeStyle = getComputedStyle(document.body).color; ctx.globalAlpha = .6; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); ctx.stroke(); ctx.globalAlpha = 1;
-}
-window.addEventListener("resize", () => { mapLayer = null; if (lapA) { drawSpeedChart(); frame(); } });
 
 // ---------------- polling ----------------
-refresh(); loadLaps();
+refresh(); loadLaps(); openFromHash();
 setInterval(() => { refresh(); if (tab === "tools") loadTasks(); }, 5000);
 setInterval(() => { if (tab === "dash") loadLaps(); }, 60000);
 </script>

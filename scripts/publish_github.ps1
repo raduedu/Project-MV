@@ -35,7 +35,7 @@ if (-not $loggedIn) {
 }
 
 # --- safety: nothing private or bulky may be tracked -------------------------------
-$bad = git ls-files | Select-String -Pattern '(^|/)(vehicles/local|tracks/local|\.cache|runs)/|\.pt$|\.npz$|data\.acd$|\.kn5$'
+$bad = git ls-files | Select-String -Pattern '(^|/)(vehicles/local|tracks/local|\.cache|runs)/|\.pt$|\.npz$|data\.acd$|\.kn5$|(^|/)CLAUDE\.md$'
 if ($bad) {
     Write-Host "Refusing to publish: these tracked files must stay local:" -ForegroundColor Red
     $bad | ForEach-Object { Write-Host "   $_" }

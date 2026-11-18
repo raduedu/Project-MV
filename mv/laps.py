@@ -63,7 +63,7 @@ def _track_geometry(track: Track, step_m: float = 3.0) -> dict:
 
 
 def make_lap(car: str, track: Track, driver: str, kind: str, lap_time: float, samples: dict[str, np.ndarray],
-             source: str, checkpoint: str = "", notes: str = "") -> dict:
+             source: str, checkpoint: str = "", notes: str = "", car_file: str = "", track_recipe: dict | None = None) -> dict:
     """Build a lap dictionary from sample arrays (times from 0, distance from the start line)."""
     out = {}
     for f, nd in _ROUND.items():
@@ -73,13 +73,18 @@ def make_lap(car: str, track: Track, driver: str, kind: str, lap_time: float, sa
     meta = {"car": car, "track": track.name, "driver": driver, "kind": kind, "lap_time": round(float(lap_time), 3),
             "track_length_m": round(track.length, 1), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "source": source, "checkpoint": checkpoint, "notes": notes,
+            # what is needed to drive this lap again (scripts/reproduce_lap.py)
+            "car_file": car_file, "track_recipe": track_recipe or track.meta.get("recipe"), "eval": "per-car",
             "vmax_kmh": round(float(np.max(samples["speed"])) * 3.6, 1),
-            "avg_kmh": round(track.length / float(lap_time) * 3.6, 1), "samples": len(out.get("t", []))}
+            "avg_kmh": round(track.length / float(lap_time) * 3.6, 1), "samples": len(out.get("t", [])),
+            # how busy the steering is: total wheel travel per second, in fractions of full lock (jitter shows up here)
+            "steer_activity": round(float(np.abs(np.diff(np.asarray(samples["steer"], float))).sum()) / float(lap_time), 3)
+            if "steer" in samples and len(samples["steer"]) > 1 else None}
     return {"meta": meta, "track": _track_geometry(track), "samples": out}
 
 
 def laps_from_result(res, track: Track, car: str, driver: str, kind: str, source: str, checkpoint: str = "",
-                     flying_only: bool = True) -> list[dict]:
+                     flying_only: bool = True, car_file: str = "") -> list[dict]:
     """Cut the recorded trace of an evaluation run (``mv.rl.evaluate``) into individual laps.
 
     Lap 1 starts from a standstill on the line; later laps are "flying".  By
@@ -104,7 +109,7 @@ def laps_from_result(res, track: Track, car: str, driver: str, kind: str, source
         smp["s"] = np.clip(s[m] - k * L, 0.0, L)
         # start the lap exactly on the line: prepend the interpolated crossing point
         laps.append(make_lap(car, track, driver, kind, float(res.lap_times[k]), smp, source + f", lap {k + 1}",
-                             checkpoint))
+                             checkpoint, car_file=car_file))
     return laps
 
 

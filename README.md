@@ -11,6 +11,8 @@ Corsa, and headed for a Formula Student Driverless car.
 
 ![A trained driver lapping a generated circuit against the physics-perfect lap](docs/img/lap_replay.gif)
 
+**Watch laps in your browser:** the replay page (`docs/index.html`, published with GitHub Pages) - or locally in the control panel (`mvctl ui`, *Laps* tab).
+
 **New here? Read [`docs/00-project-explained.md`](docs/00-project-explained.md)** - what the project is, how it works and what it has achieved, in plain language.
 
 Start with [`docs/01-architecture.md`](docs/01-architecture.md). The running

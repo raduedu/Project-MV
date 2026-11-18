@@ -30,6 +30,8 @@ supersedes it — do not edit history.*
 | D-022 | Blind episodes cut the lidar range too | active |
 | D-023 | Track preview = tightest curvature / narrowest width per stretch, not point samples | active |
 | D-024 | Limit-seeking training: recover-and-continue, lap memory, multi-lap episodes | active, under test |
+| D-025 | Evaluation is strict, per-car and timed to the crossing instant: every lap reproducible to the millisecond | active |
+| D-026 | Steering smoothness only mild and learned (filter <= 0.03 s and/or jerk penalty), judged by lap time | under test |
 
 ---
 
@@ -318,3 +320,20 @@ supersedes it — do not edit history.*
 * **Alternatives considered.** A recurrent network with very long memory
   (implicit, slower to train, hard to inspect); a per-car grip estimate as
   input (privileged in simulation, unavailable on a real car).
+
+### D-025 — Reproducible lap times
+
+* **Decision.** Evaluation never lets the car rejoin (strict), computes the
+  network for each car separately (batch-independent rounding) and times laps
+  at the interpolated line-crossing instant.
+* **Why.** A lap time anyone can reproduce exactly from the saved driver cannot
+  be doubted; and a small numeric artefact (0.1 s from batching) must not be
+  mistaken for driver improvement.
+
+### D-026 — Steering smoothness: mild and learned
+
+* **Decision.** Offer a short steering damper and a jerk penalty as training
+  options; never smooth heavily after training.
+* **Why.** Post-hoc smoothing of an untrained driver only adds lag and costs
+  time (measured); the owner wants the driver to stay on the edge. The
+  experiment decides by lap time.

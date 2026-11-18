@@ -214,6 +214,9 @@ def _closed_centerline(rng: np.random.Generator, cfg: SegmentGenConfig) -> np.nd
 def segment_track(rng: np.random.Generator | int | None = None, cfg: SegmentGenConfig | str = "gp",
                   name: str | None = None) -> Track:
     """Generate one valid circuit from straights, corners, hairpins and chicanes."""
+    # a track made from a plain seed + preset name can be made again exactly: remember the recipe
+    recipe = ({"generator": "segment_track", "seed": int(rng), "preset": cfg}
+              if isinstance(rng, (int, np.integer)) and isinstance(cfg, str) else None)
     if not isinstance(rng, np.random.Generator):
         rng = np.random.default_rng(rng)
     if isinstance(cfg, str):
@@ -233,6 +236,8 @@ def segment_track(rng: np.random.Generator | int | None = None, cfg: SegmentGenC
         phase = np.linspace(0, 2 * np.pi, m, endpoint=False)
         half = 0.5 * width * (1.0 + cfg.width_variation * np.sin(rng.integers(1, 4) * phase + rng.uniform(0, 2 * np.pi)))
         t = Track.from_centerline(xy, half, half, ds=cfg.ds, name=name or "segments", meta={"generator": "segments"})
+        if recipe is not None:
+            t.meta["recipe"] = recipe
         if t.min_radius() < max(cfg.min_radius_m, 0.6 * float(half.max()) + 0.5):
             continue
         if t.self_clearance() < cfg.min_clearance_m:

@@ -74,8 +74,11 @@ def save_record_laps(res, tracks, vp, run_name: str, it: int, best: dict) -> Non
         key = (vp.name, t.name)
         if key not in best:
             best[key] = best_lap_time(vp.name, t.name, run_name)
+        car_files = {load_vehicle(p).name: p for p in (ROOT / "vehicles").glob("*/*.yaml")}
+        car_file = str(car_files[vp.name].relative_to(ROOT)).replace(chr(92), "/") if vp.name in car_files else ""
         laps = laps_from_result(r, t, vp.name, run_name, "learned",
-                                f"training validation of {run_name}, update {it}", f"runs/{run_name}/eval_{it:05d}.pt")
+                                f"training validation of {run_name}, update {it}", f"runs/{run_name}/eval_{it:05d}.pt",
+                                car_file=car_file)
         if laps:
             lap = min(laps, key=lambda l: l["meta"]["lap_time"])
             if lap["meta"]["lap_time"] < best[key] - 1e-3:
@@ -153,6 +156,10 @@ def main() -> None:
     ap.add_argument("--episode-s", type=float, default=None, help="episode length in seconds (default 60; 240 with --limit-seeking)")
     ap.add_argument("--grip-range", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
                     help="tyre grip multiplier range for training cars (default 0.88 1.05)")
+    ap.add_argument("--steer-filter", type=float, default=None,
+                    help="steering smoothing: time constant (s) of a low-pass filter on the steering command, e.g. 0.05")
+    ap.add_argument("--steer-penalty", type=float, default=None,
+                    help="penalty on steering jerks (change of the steering command per step, squared), e.g. 0.5")
     ap.add_argument("--min-noise", type=float, default=None,
                     help="floor for the exploration noise (default 0.03)")
     ap.add_argument("--refresh-every", type=int, default=10, help="replace circuits every N updates")
@@ -196,6 +203,10 @@ def main() -> None:
         env_cfg.history_steps = args.history
     if args.grip_range:
         env_cfg.rand_grip = tuple(args.grip_range)
+    if args.steer_filter is not None:
+        env_cfg.steer_filter_s = args.steer_filter
+    if args.steer_penalty is not None:
+        env_cfg.steer_penalty = args.steer_penalty
     if args.limit_seeking:
         env_cfg.recover_on_crash = True
         env_cfg.lap_memory = True

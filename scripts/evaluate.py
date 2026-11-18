@@ -136,7 +136,8 @@ def main() -> None:
                 laps = laps_from_result(r, t, vp.name, label + (f" [{cond}]" if cond else ""),
                                         "rule-based" if name == "scripted" else "learned",
                                         "scripts/evaluate.py" + (f" ({cond})" if cond else ""),
-                                        "" if name == "scripted" else str(args.policy).replace(chr(92), "/"))
+                                        "" if name == "scripted" else str(args.policy).replace(chr(92), "/"),
+                                        car_file=str(find_vehicle(args.vehicle).relative_to(ROOT)).replace(chr(92), "/"))
                 if laps:
                     save_lap(min(laps, key=lambda l: l["meta"]["lap_time"]))
 

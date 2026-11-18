@@ -148,17 +148,23 @@ class ActuatorModel:
     driver has ever experienced.
     """
 
-    def __init__(self, vp: VehicleParams, dt: float):
+    def __init__(self, vp: VehicleParams, dt: float, steer_filter_s: float = 0.0):
         self.rate = vp.steering.max_rate_deg_s / vp.steering.max_wheel_angle_deg * dt   # lock fractions per tick
         self.k_thr = 1.0 - math.exp(-dt / max(vp.powertrain.throttle_response_time_s, 1e-3))
         self.k_brk = 1.0 - math.exp(-dt / max(vp.brakes.response_time_s, 1e-3))
         self.steer = self.thr = self.brk = 0.0
+        self.k_filter = 1.0 - math.exp(-dt / steer_filter_s) if steer_filter_s > 0 else 1.0
+        self.cmd = 0.0
 
     def sync(self, steer: float, throttle: float, brake: float) -> None:
         self.steer, self.thr, self.brk = float(steer), float(throttle), float(brake)
+        self.cmd = float(steer)
 
     def __call__(self, action) -> tuple[float, float, float]:
         target = float(np.clip(action[0], -1, 1))
+        if self.k_filter < 1.0:                      # same steering damper as in training (EnvConfig.steer_filter_s)
+            self.cmd += (target - self.cmd) * self.k_filter
+            target = self.cmd
         pedal = float(np.clip(action[1], -1, 1))
         self.steer += float(np.clip(target - self.steer, -self.rate, self.rate))
         self.thr += (max(pedal, 0.0) - self.thr) * self.k_thr
@@ -190,7 +196,7 @@ def drive(raw_env, driver, adapter: ObservationAdapter, vp: VehicleParams, laps:
     throttle is cut and the brakes are applied lightly.
     """
     dt = adapter.cfg.control_dt
-    act = ActuatorModel(vp, dt)
+    act = ActuatorModel(vp, dt, adapter.cfg.steer_filter_s)
     tel = raw_env.session.observe(timeout_s=5.0)
     act.sync(tel.steer, tel.throttle, tel.brake)
     adapter.reset()

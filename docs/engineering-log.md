@@ -906,3 +906,66 @@ README animation — generated circuits and public car files only.
 | 25.3 | Clean best laps (v5, strict): Imola 1:58.1 (+5.4 %), RBR 1:42.3 (+3.9 %), Monza 2:02.9 (+4.3 %), Mugello 2:08.5 (+4.8 %), Spa 2:42.5 (+4.3 %) vs physics ideal; FS car 8/8 generated FS circuits | Recorded as replayable laps |
 
 **Plain-language overview for presenting the project:** `docs/00-project-explained.md`.
+
+## WP26 — Exact reproduction of every lap ✅
+
+**Objective.** Any recorded lap can be driven again from its saved driver and
+must give the same time — the strongest evidence that a lap time is real.
+
+**Approach.** `scripts/reproduce_lap.py` (also the *Reproduce* button in the
+viewer): loads the lap's checkpoint, car file and track (imported, or the
+generator recipe now stored in the lap file), drives it again, compares.
+
+**Problems & resolutions**
+
+| # | Problem | Root cause | Resolution |
+|---|---|---|---|
+| 26.1 | Reproductions differed by 0.08–0.16 s (0.06–0.13 %) | The neural network was evaluated for all cars in one batch; the maths library rounds a matrix product slightly differently depending on the batch size, and the difference grows over a lap (the driving is chaotic). Proof: Mugello driven inside the original 5-track batch gave exactly 128.501 s, alone 128.581 s | Evaluation computes the network for each car separately (`_act_per_car`); verified identical lap times alone, in a batch of 2 and of 5 |
+| 26.2 | Lap times were quantised to one decision step (0.04 s) | The lap counter fired at the first step past the line | The crossing time is interpolated within the step (`RacingEnv.advance_laps`) - lap times now accurate to milliseconds |
+
+Older evaluation laps (batched, step-quantised) were moved to
+`runs/laps_superseded` and re-recorded; laps saved by training before this
+change still reproduce "within numerical noise" (the script says so).
+
+## WP27 — Steering smoothness 🕓 (settings built; experiment running)
+
+**Observation (owner).** The driver's steering is jittery and probably costs
+time. Measured "steering activity" (total wheel travel per second, in
+fractions of full lock): **1.0–1.3** for the best driver vs ~0.01–0.02 for the
+physics-ideal lap (whose steering is derived from the line's curvature, so it
+is extra smooth).
+
+**Quick check (driver NOT trained for it, so only a hint).** A low-pass filter
+on its steering command: 0.03 s → activity -35 %, lap times unchanged
+(±0.1 s); 0.06 s → activity -75 %, laps 0.1–0.4 s *slower* (the filter only
+adds lag). → Heavy smoothing would make the driver timid, exactly like the
+over-strict track-limit penalty earlier; the owner asked for it to stay on the
+edge. The fix must be *learned*, and mild.
+
+**Approach.** Two settings (`EnvConfig`, `train.py`): `--steer-filter S`
+(time constant of a steering damper, also applied identically in Assetto
+Corsa by `ActuatorModel`) and `--steer-penalty X` (penalty on the squared
+change of the steering command). Lap files and the viewer now show steering
+activity and a steering trace next to the ideal lap's.
+
+**Experiment (running, 2 h each, from `gt3rs_v5_preview`):**
+`gt3rs_v6_steer_light` (filter 0.03 s + penalty 0.2) vs
+`gt3rs_v6_steer_penalty` (penalty 0.5, no filter = no lag). Judged by strict
+lap times first, steering activity second. *Results to be appended.*
+
+## WP28 — Shared replay viewer and published replay page ✅
+
+* `mv/ui/replay.js`: one viewer for the control panel and the published page.
+  New: line coloured by **time won/lost vs the ghost**, **sector times**,
+  **steering trace** with steering activity, gap-to-ghost chart, space bar,
+  links that open a lap directly (`#lap=...&ghost=...`), Reproduce button.
+* `docs/index.html` (+ `docs/replay.js`, `docs/laps/index.json`): a stand-alone
+  replay page for GitHub Pages - generated circuits and public-data cars only.
+* `scripts/make_example_laps.py`: examples tried on listed circuits in order,
+  first clean lap used, all attempts printed. Current examples: Taycan Turbo GT
+  (multi-car driver) on a generated GP-style circuit, +10.3 % off ideal; the
+  generic FS car on two generated FS circuits, +4.5 % and +1.7 %.
+* README animation: track map + chase camera + dashboard (`--gif-only`
+  re-renders it).
+* `CLAUDE.md` (assistant working notes) is no longer published (owner's
+  request): untracked, git-ignored and blocked by the publish safety check.

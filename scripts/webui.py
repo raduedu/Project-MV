@@ -286,6 +286,13 @@ def act(path: str, body: dict) -> dict:
             raise ValueError("unknown track")
         tid = start_task("import", f"Import track {track}", ["scripts/import_ac_track.py", track])
         return {"ok": True, "task": tid, "msg": f"Importing {track} ..."}
+    if path == "/api/reproduce":
+        from mv.laps import load_lap
+        key = body.get("key", "")
+        meta = load_lap(key)["meta"]
+        tid = start_task("reproduce", f"Reproduce {meta['driver']} @ {meta['track']} ({meta['lap_time']:.3f} s)",
+                         ["scripts/reproduce_lap.py", key])
+        return {"ok": True, "task": tid, "msg": "Driving the lap again from the saved driver - see Tools > Tasks."}
     if path == "/api/check":
         v = body.get("vehicle", "")
         if v not in {x["name"] for x in vehicles()}:
@@ -349,6 +356,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p in ("/", "/index.html"):
                 return self._send(200, UI_FILE.read_bytes(), "text/html; charset=utf-8")
+            if p == "/replay.js":
+                return self._send(200, (UI_FILE.parent / "replay.js").read_bytes(), "text/javascript; charset=utf-8")
             if p == "/api/state":
                 return self._json(tp.snapshot(max_age_s=3.0))
             if p == "/api/options":
@@ -391,7 +400,8 @@ class Handler(BaseHTTPRequestHandler):
                 allowed = (ROOT / "runs").resolve(), (ROOT / "docs").resolve()
                 if not any(str(f).startswith(str(a)) for a in allowed) or not f.is_file():
                     return self._send(404, b"not found", "text/plain")
-                ctype = {".png": "image/png", ".csv": "text/csv", ".json": "application/json"}.get(
+                ctype = {".png": "image/png", ".gif": "image/gif", ".csv": "text/csv", ".json": "application/json",
+                         ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8"}.get(
                     f.suffix, "text/plain; charset=utf-8")
                 return self._send(200, f.read_bytes(), ctype)
             self._send(404, b"not found", "text/plain")

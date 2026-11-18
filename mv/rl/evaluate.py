@@ -102,7 +102,7 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
     obs = env.observe()
     max_steps = int(cfg.max_episode_s / cfg.control_dt)
     for _step in range(max_steps):
-        action, _, _ = net.act(obs, deterministic=True)
+        action = _act_per_car(net, obs)
         # read state that step() would overwrite when an episode ends
         obs, _rew, term, trunc, info = env.step(action)
         done = term | trunc
@@ -145,6 +145,22 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
                              off_track_steps=int(off_steps[i]), recoveries=int(env.recoveries[i]),
                              trace={k: np.asarray(v) for k, v in traces[i].items()} if record else {}))
     return out
+
+
+def _act_per_car(net, obs: torch.Tensor) -> torch.Tensor:
+    """The driver's actions, computed for each car on its own.
+
+    Why: the maths library may round a matrix product very slightly differently
+    depending on how many rows (cars) are computed together.  Over a two-minute
+    lap such differences grow (the driving is chaotic), so the same driver could
+    post a lap 0.1 s different just because other tracks were evaluated in the
+    same batch.  Computing every car separately makes a lap time independent of
+    what else was evaluated - so any lap can be reproduced exactly
+    (scripts/reproduce_lap.py; engineering log WP26).
+    """
+    if not isinstance(net, torch.nn.Module):          # rule-based driver: element-wise maths, already independent
+        return net.act(obs, deterministic=True)[0]
+    return torch.cat([net.act(obs[i:i + 1], deterministic=True)[0] for i in range(obs.shape[0])], 0)
 
 
 def cfg_ds(tracks: list[Track]) -> float:

@@ -82,6 +82,10 @@ class EnvConfig:
     edge_penalty_const: float = 0.1              # per step while any part of the car is over the edge
     crash_penalty: float = 5.0                   # when the episode ends by leaving the track / spinning
     smooth_penalty: float = 0.02                 # discourages sawing at the wheel and pedal
+    # --- steering smoothness (engineering log WP27) ---
+    # A jittery wheel scrubs the tyres and costs speed.  Two independent knobs:
+    steer_filter_s: float = 0.0                  # time constant of a low-pass filter on the steering command, s (0 = off)
+    steer_penalty: float = 0.0                   # extra penalty per (change of the steering command per step)^2
     # --- termination ---
     off_track_margin_m: float = 1.0              # car centre this far beyond the edge = crashed
     max_heading_error_rad: float = 1.8
@@ -165,6 +169,7 @@ class RacingEnv:
         self.hist_idx = torch.tensor([self.hist_len - 1 - cfg.history_every * j for j in range(1, cfg.history_steps + 1)],
                                      device=dev, dtype=torch.long)
         self.prev_action = torch.zeros(num_envs, 2, device=dev)
+        self.steer_cmd = torch.zeros(num_envs, device=dev)          # state of the steering filter
         self.lap_count, self.lap_start_t = z(torch.long), z()
         self.last_lap_time = torch.full((num_envs,), float("nan"), device=dev)
         self.ep_return, self.ep_len = z(), z()
@@ -257,6 +262,7 @@ class RacingEnv:
         full_range = torch.full((k,), float(cfg.lidar_range_m), device=dev)
         self.lidar_range[ids] = torch.where(blind, self.horizon[ids], full_range) if cfg.blind_lidar else full_range
         self.prev_action[ids] = 0.0
+        self.steer_cmd[ids] = 0.0
         self.lap_count[ids], self.lap_start_t[ids] = 0, 0.0
         self.ep_return[ids], self.ep_len[ids] = 0.0, 0.0
         self.recoveries[ids] = 0
@@ -292,6 +298,7 @@ class RacingEnv:
         self.along[ids], self.lat[ids], self.head_err[ids] = 0.0, 0.0, 0.0
         self.stall_t[ids] = 0.0
         self.prev_action[ids] = 0.0
+        self.steer_cmd[ids] = 0.0
         self.reset_history(ids)
 
     # ------------------------------------------------------------------------
@@ -311,12 +318,21 @@ class RacingEnv:
         return torch.maximum(torch.maximum(sf, sr), g_use)
 
     def advance_laps(self, progress: torch.Tensor) -> torch.Tensor:
-        """Add progress, count laps, time them.  Returns which cars just completed a lap."""
+        """Add progress, count laps, time them.  Returns which cars just completed a lap.
+
+        The line is crossed somewhere *during* the last decision step (0.04 s), so the
+        crossing time is interpolated from how far before/after the line the car was:
+        lap times are then accurate to a few milliseconds instead of to one step.
+        """
+        s_before = self.s_total.clone()
         self.s_total += progress
         length = self.tracks.length[self.tid]
-        lap_done = self.s_total >= (self.lap_count + 1).float() * length
-        self.last_lap_time = torch.where(lap_done, self.t_ep - self.lap_start_t, self.last_lap_time)
-        self.lap_start_t = torch.where(lap_done, self.t_ep, self.lap_start_t)
+        line = (self.lap_count + 1).float() * length
+        lap_done = self.s_total >= line
+        frac = ((line - s_before) / (self.s_total - s_before).clamp(min=1e-6)).clamp(0.0, 1.0)
+        t_cross = self.t_ep - self.cfg.control_dt * (1.0 - frac)
+        self.last_lap_time = torch.where(lap_done, t_cross - self.lap_start_t, self.last_lap_time)
+        self.lap_start_t = torch.where(lap_done, t_cross, self.lap_start_t)
         self.lap_count += lap_done.long()
         return lap_done
 
@@ -491,6 +507,10 @@ class RacingEnv:
         cfg, sim = self.cfg, self.sim
         action = action.clamp(-1.0, 1.0)
         steer, pedal = action[:, 0], action[:, 1]
+        if cfg.steer_filter_s > 0:                 # steering damper: the wheel follows the command smoothly
+            k = 1.0 - math.exp(-cfg.control_dt / cfg.steer_filter_s)
+            self.steer_cmd = self.steer_cmd + (steer - self.steer_cmd) * k
+            steer = self.steer_cmd
         thr, brk = pedal.clamp(min=0.0), (-pedal).clamp(min=0.0)
         for _ in range(cfg.substeps):
             sim.step(steer, thr, brk)
@@ -503,9 +523,10 @@ class RacingEnv:
         over = (torch.maximum(self.lat - self.w_left, -self.lat - self.w_right) + self.half_width)  # body over the edge (m)
         over_pos = over.clamp(min=0.0)
         jerk = ((action - self.prev_action) ** 2).sum(1)
+        steer_jerk = (action[:, 0] - self.prev_action[:, 0]) ** 2
         reward = (cfg.progress_scale * progress
                   - cfg.edge_penalty * over_pos.clamp(max=3.0) - cfg.edge_penalty_const * (over > 0).float()
-                  - cfg.smooth_penalty * jerk)
+                  - cfg.smooth_penalty * jerk - cfg.steer_penalty * steer_jerk)
 
         # ---- end of episode? -------------------------------------------------------
         speed = torch.sqrt(sim.vx ** 2 + sim.vy ** 2)
