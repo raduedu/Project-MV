@@ -49,7 +49,8 @@ def eval_config(base: EnvConfig | None = None, max_time_s: float = 900.0) -> Env
     """
     one = (1.0, 1.0)
     return replace(base or EnvConfig(), blind_prob=0.0, rand_grip=one, rand_mass=one, rand_power=one,
-                   rand_aero=one, max_episode_s=max_time_s, standing_start_prob=0.0, recover_on_crash=False)
+                   rand_aero=one, max_episode_s=max_time_s, standing_start_prob=0.0, recover_on_crash=False,
+                   vary_car=False)
 
 
 @torch.no_grad()

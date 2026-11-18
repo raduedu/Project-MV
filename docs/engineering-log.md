@@ -948,10 +948,14 @@ Corsa by `ActuatorModel`) and `--steer-penalty X` (penalty on the squared
 change of the steering command). Lap files and the viewer now show steering
 activity and a steering trace next to the ideal lap's.
 
-**Experiment (running, 2 h each, from `gt3rs_v5_preview`):**
-`gt3rs_v6_steer_light` (filter 0.03 s + penalty 0.2) vs
-`gt3rs_v6_steer_penalty` (penalty 0.5, no filter = no lag). Judged by strict
-lap times first, steering activity second. *Results to be appended.*
+**Experiment.** First started on the single-car 911 driver (`gt3rs_v6_*`),
+then — at the owner's question "why not the multi-car one?" — stopped after
+12 minutes and moved to the multi-car driver, because the goal is *any* car and
+a single-car driver cannot drive other car files (25.2): running (2.5 h each,
+from `multi_v1`, 911 + 918 + Taycan): `multi_v2_steer_light` (filter 0.03 s +
+penalty 0.2) vs `multi_v2_steer_penalty` (penalty 0.5, no filter = no lag).
+Judged by strict lap times first, steering activity second. *Results to be
+appended.*
 
 ## WP28 — Shared replay viewer and published replay page ✅
 
@@ -969,3 +973,34 @@ lap times first, steering activity second. *Results to be appended.*
   re-renders it).
 * `CLAUDE.md` (assistant working notes) is no longer published (owner's
   request): untracked, git-ignored and blocked by the publish safety check.
+
+## WP29 — Car variation: learning to read the car 🕓 (built; runs queued)
+
+**Problem (25.2).** A driver trained on one car file fails on another (0/6 for
+the 911 drivers with the public 992; the multi-car driver: 1/6, and its one lap
+at Mugello took 3:29 instead of ~2:08). Cause: the car-description inputs never
+changed during training, so the driver never had to *use* them.
+
+**Approach.** `EnvConfig.vary_car` / `train.py --vary-cars`: every episode each
+car's mass (x0.85-1.20), power (x0.70-1.40), downforce (x0.5-1.6), drag
+(x0.80-1.25) and tyre grip (x0.90-1.15) are drawn anew, the physics uses them
+(new per-car downforce and drag factors in `VehicleSim`), and **the car
+description in the observation is updated to match**. The hidden "conditions"
+variation stays on top. Evaluation always uses the true car file.
+`--holdout a,b`: validation also drives car files the driver never trained on
+and prints how many tracks it completes - "works on an unseen car" becomes a
+measured number.
+
+**Verification.** `test_car_variation_changes_the_car_and_tells_the_driver`:
+description = file x factors; acceleration at 45 m/s correlates with the
+power-to-mass factor; evaluation uses the true car. (First version tested at
+15 m/s and failed: there the car is grip-limited, so power cannot show - a
+test-design error, not a code error.) 126 tests pass.
+
+**Queued (after the steering A/B):**
+* `multi_v3_cars` - 911 + 918 + Taycan, car variation, held-out test cars:
+  public-data 992 GT3 RS and 918 Spyder; mild steering penalty 0.3; 3 h.
+  Baseline to beat: 1/6 on the held-out 992.
+* `fs_v2_vary` - FS car with car variation, 2.5 h: the generic FS car is an
+  estimate of a real team car, so robustness across FS-like cars is what will
+  transfer to the real one.

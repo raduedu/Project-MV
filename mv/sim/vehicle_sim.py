@@ -124,6 +124,8 @@ class VehicleSim:
         self.mass_scale = torch.ones(num_envs, device=dev)
         self.power_scale = torch.ones(num_envs, device=dev)
         self.aero_scale = torch.ones(num_envs, device=dev)
+        self.df_scale = torch.ones(num_envs, device=dev)          # downforce only (car variation)
+        self.drag_scale = torch.ones(num_envs, device=dev)        # drag only (car variation)
         # diagnostics refreshed every step
         self.tire_util = torch.zeros(num_envs, 4, device=dev)    # combined slip of each tyre; 1.0 = peak grip
         self.slip = torch.zeros(num_envs, 4, device=dev)         # slip angle of each tyre (rad)
@@ -323,7 +325,7 @@ class VehicleSim:
 
         # ---- vertical load on each tyre -------------------------------------------
         fz = (self.fz_static[None] * self.mass_scale[:, None]
-              + self.aero_fz[None] * (speed2 * self.aero_scale)[:, None]
+              + self.aero_fz[None] * (speed2 * self.aero_scale * self.df_scale)[:, None]
               + self.k_long * (self.mass_scale * self.ax)[:, None] * (1 - 2 * self.is_front[None])
               + self.k_lat[None] * (self.mass_scale * self.ay)[:, None])
         fz = fz.clamp(min=50.0)
@@ -380,7 +382,7 @@ class VehicleSim:
         # ---- sum forces and moments in the body frame --------------------------------
         fxb = fx * cd - fy * sd
         fyb = fx * sd + fy * cd
-        drag = self.drag_k * self.aero_scale * vx * vx.abs()
+        drag = self.drag_k * self.aero_scale * self.drag_scale * vx * vx.abs()
         ax_body = (fxb.sum(1) - drag) / mass
         ay_body = fyb.sum(1) / mass
         mz = (self.wheel_x[None] * fyb - self.wheel_y[None] * fxb).sum(1)

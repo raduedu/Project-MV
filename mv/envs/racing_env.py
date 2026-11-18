@@ -99,6 +99,15 @@ class EnvConfig:
     rand_mass: tuple[float, float] = (0.97, 1.06)
     rand_power: tuple[float, float] = (0.93, 1.03)
     rand_aero: tuple[float, float] = (0.9, 1.05)
+    # --- car variation (engineering log WP29): the CAR changes and the driver is TOLD (car descriptor) ---
+    # Different from the hidden variation above (conditions the driver must sense): this teaches the
+    # driver to read the car description, so a new car file works without retraining.
+    vary_car: bool = False
+    vary_mass: tuple[float, float] = (0.85, 1.20)
+    vary_power: tuple[float, float] = (0.70, 1.40)
+    vary_downforce: tuple[float, float] = (0.50, 1.60)
+    vary_drag: tuple[float, float] = (0.80, 1.25)
+    vary_tyre_grip: tuple[float, float] = (0.90, 1.15)
     obs_clip: float = 5.0
     # --- limit-seeking mode (engineering log WP21) ---
     # The owner's principle: find the limit, sometimes overstep it, adjust lap after lap.
@@ -182,6 +191,7 @@ class RacingEnv:
         self.mem_lap = torch.full((num_envs, n_cells), -1, device=dev, dtype=torch.long)
 
         self.car_desc = self._car_descriptor()
+        self.desc_factor = torch.ones(num_envs, len(self.car_desc), device=dev)   # car variation, per car
         self.num_actions = 2
         self.reset(torch.arange(num_envs, device=dev))
         self.num_obs = self._observe(torch.arange(1, device=dev)).shape[1]
@@ -249,10 +259,23 @@ class RacingEnv:
         x = p[:, 0] - torch.sin(psi) * lat0
         y = p[:, 1] + torch.cos(psi) * lat0
         self.sim.reset(ids, x, y, psi + yaw_noise, v0)
-        self.sim.grip[ids] = self._rand(k, *cfg.rand_grip)
-        self.sim.mass_scale[ids] = self._rand(k, *cfg.rand_mass)
-        self.sim.power_scale[ids] = self._rand(k, *cfg.rand_power)
+        # car variation (known to the driver) x conditions (hidden from it)
+        if cfg.vary_car:
+            fm, fp = self._rand(k, *cfg.vary_mass), self._rand(k, *cfg.vary_power)
+            fdf, fdr, fg = self._rand(k, *cfg.vary_downforce), self._rand(k, *cfg.vary_drag), self._rand(k, *cfg.vary_tyre_grip)
+        else:
+            fm = fp = fdf = fdr = fg = torch.ones(k, device=dev)
+        self.sim.grip[ids] = self._rand(k, *cfg.rand_grip) * fg
+        self.sim.mass_scale[ids] = self._rand(k, *cfg.rand_mass) * fm
+        self.sim.power_scale[ids] = self._rand(k, *cfg.rand_power) * fp
         self.sim.aero_scale[ids] = self._rand(k, *cfg.rand_aero)
+        self.sim.df_scale[ids], self.sim.drag_scale[ids] = fdf, fdr
+        # the description the driver sees changes with the car (see _car_descriptor for the entries)
+        f = torch.ones(k, len(self.car_desc), device=dev)
+        f[:, 0], f[:, 1], f[:, 2] = fm, fp / fm, fg
+        f[:, 3], f[:, 4] = fdf / fm, fdr / fm
+        f[:, 11] = (fp / fdr) ** (1.0 / 3.0)            # top speed ~ (power / drag)^(1/3)
+        self.desc_factor[ids] = f
         self.tid[ids], self.idx[ids] = tid, idx
         self.along[ids], self.lat[ids], self.head_err[ids] = 0.0, lat0, yaw_noise
         self.w_left[ids], self.w_right[ids] = tr.w_left[tid, idx], tr.w_right[tid, idx]
@@ -467,7 +490,7 @@ class RacingEnv:
         width = w_min / 15.0 * seen
         horizon = (self.horizon[ids] / self.look_m[-1]).clamp(max=1.0)[:, None]
         lidar = torch.sqrt(self._lidar(ids) / cfg.lidar_range_m)   # sqrt: finer resolution up close
-        desc = self.car_desc[None].expand(len(ids), -1)
+        desc = self.car_desc[None] * self.desc_factor[ids]
         parts = [car, self.prev_action[ids], pos, kappa, width, horizon, lidar, desc]
         if self.hist_len:
             parts.append(self.hist[ids][:, self.hist_idx].reshape(len(ids), -1))

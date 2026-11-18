@@ -156,6 +156,11 @@ def main() -> None:
     ap.add_argument("--episode-s", type=float, default=None, help="episode length in seconds (default 60; 240 with --limit-seeking)")
     ap.add_argument("--grip-range", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
                     help="tyre grip multiplier range for training cars (default 0.88 1.05)")
+    ap.add_argument("--vary-cars", action="store_true",
+                    help="vary each car (mass, power, downforce, drag, tyre grip) per episode and tell the driver, so it "
+                         "learns to read the car description and handles new car files (engineering log WP29)")
+    ap.add_argument("--holdout", default="",
+                    help="comma-separated car files NOT trained on; validation also drives them (one per check, in turn)")
     ap.add_argument("--steer-filter", type=float, default=None,
                     help="steering smoothing: time constant (s) of a low-pass filter on the steering command, e.g. 0.05")
     ap.add_argument("--steer-penalty", type=float, default=None,
@@ -203,6 +208,9 @@ def main() -> None:
         env_cfg.history_steps = args.history
     if args.grip_range:
         env_cfg.rand_grip = tuple(args.grip_range)
+    if args.vary_cars:
+        env_cfg.vary_car = True
+    holdout_vps = [load_vehicle(find_vehicle(v.strip())) for v in args.holdout.split(",") if v.strip()]
     if args.steer_filter is not None:
         env_cfg.steer_filter_s = args.steer_filter
     if args.steer_penalty is not None:
@@ -325,6 +333,15 @@ def main() -> None:
                 speeds = [r.length_m / r.flying_lap * 3.6 for r in res if r.finished]
                 score = sum(r.finished for r in res) + (float(np.mean(speeds)) / 1000.0 if speeds else 0.0)
                 ppo.save(run / f"eval_{it:05d}.pt", {"iteration": it, "score": score, "vehicle": args.vehicle})
+                if holdout_vps:                  # a car file the driver never trained on
+                    hv = holdout_vps[(n_evals - 1) % len(holdout_vps)]
+                    hres = evaluate(ppo.net, hv, val, "cpu", laps=2, cfg=env_cfg)
+                    hdone = sum(r.finished for r in hres)
+                    print(f"  held-out car {hv.name}: {hdone}/{len(hres)} completed  " +
+                          " ".join(f"{r.track}:{r.flying_lap:.2f}" for r in hres if r.finished and not r.track.startswith("val_")),
+                          flush=True)
+                    if tb:
+                        tb.add_scalar(f"holdout/{hv.name}", hdone / len(hres), ppo.total_steps)
                 if score > best_score:
                     best_score = score
                     ppo.save(run / "best.pt", {"iteration": it, "best_score": best_score, "vehicle": args.vehicle})

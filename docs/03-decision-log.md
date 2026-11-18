@@ -32,6 +32,8 @@ supersedes it — do not edit history.*
 | D-024 | Limit-seeking training: recover-and-continue, lap memory, multi-lap episodes | active, under test |
 | D-025 | Evaluation is strict, per-car and timed to the crossing instant: every lap reproducible to the millisecond | active |
 | D-026 | Steering smoothness only mild and learned (filter <= 0.03 s and/or jerk penalty), judged by lap time | under test |
+| D-027 | Experiments run on the multi-car driver, not single-car ones | active |
+| D-028 | Car variation told to the driver (descriptor follows the varied car); held-out car files in validation | active, under test |
 
 ---
 
@@ -337,3 +339,23 @@ supersedes it — do not edit history.*
 * **Why.** Post-hoc smoothing of an untrained driver only adds lag and costs
   time (measured); the owner wants the driver to stay on the edge. The
   experiment decides by lap time.
+
+### D-027 — Experiment on the multi-car driver
+
+* **Context.** The steering A/B was first started on the single-car 911
+  driver because it is the cleanest yardstick. The owner asked why.
+* **Decision.** Run improvements on the multi-car driver.
+* **Why.** The goal is any car; single-car drivers cannot drive other car
+  files at all (25.2), so anything learned on them would have to be trained
+  into the multi-car driver again. A slightly noisier comparison on the right
+  model beats a clean comparison on a dead end.
+
+### D-028 — Car variation, told to the driver
+
+* **Options.** (a) More car files. (b) Hidden variation only (as before).
+  (c) Vary the car and update the car description accordingly.
+* **Decision.** (c), plus held-out car files in validation.
+* **Why.** (b) teaches robustness but not adaptation - the driver cannot know
+  which car it is in. (c) forces it to read the description; together with
+  (a) over time it is what makes "add a car file and it drives" true. Held-out
+  cars make that claim measurable instead of assumed.

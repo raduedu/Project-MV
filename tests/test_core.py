@@ -431,3 +431,30 @@ def test_lap_memory_remembers_last_lap(car):
     assert float(v_last[:10].mean()) == pytest.approx(float(np.mean(speeds[-50:])), rel=0.1)
     u_last = block[n:2 * n]
     assert 0.2 < float(u_last.mean()) < 1.5                  # a cautious driver: below the limit, but not idle
+
+
+def test_car_variation_changes_the_car_and_tells_the_driver(car):
+    """vary_car: the physics changes AND the car description in the observation changes to match."""
+    from dataclasses import replace
+    tracks = TrackBatch([circle_track(300.0, 8.0)])
+    env = RacingEnv(car, tracks, 64, replace(EnvConfig(), vary_car=True, rand_grip=(1, 1), rand_mass=(1, 1),
+                                             rand_power=(1, 1), rand_aero=(1, 1)), device="cpu", seed=4)
+    lay = env.obs_layout["car_desc"]
+    desc = env.observe()[:, lay]
+    assert desc[:, 0].std() > 0.01, "mass entry must differ between cars"
+    # the description matches the physics actually simulated
+    assert torch.allclose(desc[:, 0], env.car_desc[0] * env.sim.mass_scale, rtol=1e-5)
+    assert torch.allclose(desc[:, 1], env.car_desc[1] * env.sim.power_scale / env.sim.mass_scale, rtol=1e-5)
+    # more power per kg -> more acceleration, full throttle, straight on.  At 45 m/s acceleration is
+    # power-limited (at low speed it is grip/traction-limited, where extra power cannot show).
+    ids = torch.arange(64)
+    env.sim.reset(ids, env.sim.x.clone(), env.sim.y.clone(), env.tracks.psi[env.tid, env.idx], torch.full((64,), 45.0))
+    v0 = env.sim.vx.clone()
+    for _ in range(25):
+        env.sim.step(torch.zeros(64), torch.ones(64), torch.zeros(64))
+    gain = env.sim.vx - v0
+    pw = env.sim.power_scale / env.sim.mass_scale
+    assert torch.corrcoef(torch.stack([gain, pw]))[0, 1] > 0.8
+    # evaluation always drives the true car file
+    ev = RacingEnv(car, tracks, 8, eval_config(replace(EnvConfig(), vary_car=True)), device="cpu")
+    assert torch.allclose(ev.observe()[:, lay], ev.car_desc[None].expand(8, -1))
