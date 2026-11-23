@@ -229,3 +229,26 @@ def test_open_lap_in_game_starts_restarts_or_plays(tmp_path, monkeypatch):
     assert r["needs_restart"] and not link.cmds and len(started) == 1      # asks, does nothing yet
     r = L.open_lap_in_game(payload, link, restart=True, ac_root=ac_root)
     assert link.cmds == [Command.QUIT] and r["started"] and len(started) == 2
+
+
+def test_exit_watchdog_ends_only_a_game_that_hangs_after_a_clean_exit(tmp_path):
+    """A stand-in process plays the game: untouched while no clean exit is logged, ended after one."""
+    import subprocess
+    import sys
+    import threading
+    import time as _t
+    from mv.ac.launch import watch_game
+    log = tmp_path / "log.txt"
+    log.write_text("loading...\n")
+    since = _t.time() - 1
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        # no "CLEAN EXIT" in the log: the watchdog must leave it alone
+        assert watch_game(proc.pid, since, log, grace_s=0.3, poll_s=0.1, max_hours=1.5 / 3600) == "gave up"
+        assert proc.poll() is None
+        threading.Timer(0.5, lambda: log.write_text("...\nCLEAN EXIT\n")).start()
+        assert watch_game(proc.pid, since, log, grace_s=0.5, poll_s=0.1, max_hours=0.01) == "ended after clean exit"
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()

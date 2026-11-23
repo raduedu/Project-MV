@@ -36,7 +36,7 @@ import uuid
 from pathlib import Path
 
 __all__ = ["documents_dir", "race_ini_path", "ac_ids_for_lap", "car_skins", "build_race_ini", "write_race_ini",
-           "game_running", "steam_running", "running_session", "start_game", "open_lap_in_game", "BACKUP_DIR"]
+           "game_running", "steam_running", "running_session", "start_game", "open_lap_in_game", "watch_game", "BACKUP_DIR"]
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKUP_DIR = ROOT / "runs" / "ac_launch"
@@ -199,7 +199,10 @@ def start_game(ac_root: Path) -> subprocess.Popen:
     if not exe.is_file():
         raise FileNotFoundError(exe)
     flags = 0x00000008 | 0x00000200                      # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-    return subprocess.Popen([str(exe)], cwd=str(ac_root), creationflags=flags, close_fds=True)
+    since = time.time()
+    proc = subprocess.Popen([str(exe)], cwd=str(ac_root), creationflags=flags, close_fds=True)
+    _start_watchdog(proc.pid, since)                     # ends it if it hangs after you quit (watch_game)
+    return proc
 
 
 # ---------------------------------------------------------------------- one call for the UI and the command line
@@ -253,3 +256,70 @@ def open_lap_in_game(payload: dict, link, ghost_car: bool = False, restart: bool
     return {"ok": True, "started": True,
             "msg": f"Starting Assetto Corsa on {where}{' (+ ghost car)' if ghost_car else ''}. "
                    f"The lap starts by itself when the session has loaded.{warn}"}
+
+
+# ---------------------------------------------------------------------- exit watchdog
+def game_log_path() -> Path:
+    return documents_dir() / "Assetto Corsa" / "logs" / "log.txt"
+
+
+def _alive(pid: int) -> bool:
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True,
+                         creationflags=0x08000000).stdout
+    return str(pid) in out
+
+
+def _clean_exit_logged(log: Path, since: float) -> bool:
+    try:
+        if log.stat().st_mtime < since:
+            return False
+        with open(log, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            return b"CLEAN EXIT" in f.read()
+    except OSError:
+        return False
+
+
+def watch_game(pid: int, since: float, log: Path | None = None, grace_s: float = 8.0, poll_s: float = 1.0,
+               max_hours: float = 24.0, kill=None) -> str:
+    """End a game process that hangs after a clean exit (owner's report, 2026-11-23; log WP33).
+
+    Assetto Corsa writes "CLEAN EXIT" to its log when the player quits. Started
+    outside Steam's own launcher, ``acs.exe`` sometimes stays alive afterwards
+    without a window, and Steam then shows the game as running/"stopping"
+    forever. Content Manager handles this the same way: if the process is still
+    there ``grace_s`` seconds after a clean exit was logged, it is terminated.
+    A game that has not logged its exit is never touched. Returns what happened.
+    """
+    log = log or game_log_path()
+    kill = kill or (lambda p: subprocess.run(["taskkill", "/PID", str(p), "/F"], capture_output=True,
+                                             creationflags=0x08000000))
+    t_end = time.time() + max_hours * 3600
+    exit_seen = None
+    while time.time() < t_end:
+        if not _alive(pid):
+            return "exited"
+        if exit_seen is None and _clean_exit_logged(log, since):
+            exit_seen = time.time()
+        if exit_seen is not None and time.time() - exit_seen > grace_s:
+            kill(pid)
+            return "ended after clean exit"
+        time.sleep(poll_s)
+    return "gave up"
+
+
+def _start_watchdog(pid: int, since: float) -> None:
+    """Run :func:`watch_game` in its own windowless process (outlives the control panel)."""
+    import sys
+    pyw = Path(sys.executable).with_name("pythonw.exe")
+    exe = str(pyw if pyw.is_file() else sys.executable)
+    flags = 0x00000008 | 0x00000200 | 0x08000000
+    subprocess.Popen([exe, "-m", "mv.ac.launch", "watch", str(pid), str(since)], cwd=str(ROOT),
+                     creationflags=flags, close_fds=True)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) == 4 and sys.argv[1] == "watch":
+        watch_game(int(sys.argv[2]), float(sys.argv[3]))

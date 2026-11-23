@@ -68,12 +68,16 @@ _proc_cache: tuple[float, list[dict]] = (0.0, [])
 
 
 def python_processes(max_age_s: float = 0.0) -> list[dict]:
-    """All python.exe processes with their command lines (Windows)."""
+    """All python.exe / pythonw.exe processes with their command lines (Windows).
+
+    pythonw.exe matters: the desktop shortcut starts the control panel without a
+    window (pythonw); missing it made "stop" miss the panel and a second start
+    run a duplicate (log WP33)."""
     global _proc_cache
     if max_age_s > 0 and time.time() - _proc_cache[0] < max_age_s:
         return _proc_cache[1]
     cmd = ["powershell", "-NoProfile", "-Command",
-           "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+           "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | "
            "Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress"]
     out = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000).stdout.strip()
     data = json.loads(out) if out else []

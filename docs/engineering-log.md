@@ -1242,3 +1242,23 @@ changed) and try the button with the game closed. Open questions for the
 in-game test: does `acs.exe` started directly start the session on this
 install (Content Manager's "naive" start), is the AI ghost car accepted in
 Practice, do the forced gears hold with the owner's H-shifter setting.
+
+**Problem found in the owner's first one-click test (2026-11-23).** After
+quitting, the game could not be started again: Steam said it was still
+running and "Stop" looped. Root cause: the game started by the launcher wrote
+"CLEAN EXIT" to its log at 22:20:04, but `acs.exe` stayed alive without a
+window (75 threads, 860 MB) - so it was invisible in Task Manager's main list
+and Steam waited for it forever. Resolution: the hung process (exit already
+logged, nothing to lose) was ended; `start_game` now also starts a small
+windowless watchdog (`watch_game`) that ends `acs.exe` only if it is still
+alive 8 s after a clean exit was logged - Content Manager does the same - and
+never touches a game that has not logged its exit
+(`test_exit_watchdog_ends_only_a_game_that_hangs_after_a_clean_exit`, with a
+stand-in process).
+
+**Second problem, found while fixing the first.** A control panel started by
+the desktop shortcut runs as `pythonw.exe`, but the process search
+(`train_plan.python_processes`) listed only `python.exe`: "stop" did not find
+the panel and a second start ran a duplicate. Fixed (both names); the
+duplicate servers were ended one by one (never a process tree - training
+was not affected) and one panel restarted.
