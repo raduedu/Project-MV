@@ -1,13 +1,14 @@
 """Show a recorded lap inside Assetto Corsa, with the ideal-lap ghost (engineering log WP32).
 
 Before: install the in-game apps once (``mv\\ac\\plugin\\install_plugin.ps1``),
-start an offline **Practice** session on the same circuit with the same car
-(add one AI car if you want the ghost as a real car). Then::
+This command starts the game on the lap's circuit and car (offline Practice;
+your weather, time of day and driver name are kept). Then::
 
     python scripts/ac_view.py --list                     # laps that can be shown (imported circuits)
     python scripts/ac_view.py --best ks_porsche_911_gt3_rs imola
     python scripts/ac_view.py "local:ks_porsche_911_gt3_rs/imola/2026..._multi_v3_cars" --speed 0.5
-    python scripts/ac_view.py --pause | --play | --restart | --stop
+    python scripts/ac_view.py --best ks_porsche_911_gt3_rs imola --ghost-car   # ghost as a real AI car
+    python scripts/ac_view.py --pause | --play | --restart | --stop | --quit
 
 The same is one click in the control panel: lap replay -> "View in Assetto Corsa".
 The command waits until the game confirms it has the lap (the game then keeps it).
@@ -43,7 +44,11 @@ def main() -> int:
     ap.add_argument("--no-ghost", action="store_true")
     ap.add_argument("--no-loop", action="store_true")
     ap.add_argument("--wait", type=float, default=600.0, help="seconds to wait for the game (default 600)")
-    for c in ("play", "pause", "restart", "stop"):
+    ap.add_argument("--ghost-car", action="store_true", help="add one AI car to the session as the ghost")
+    ap.add_argument("--restart-game", action="store_true",
+                    help="if the game runs another car/circuit: close it and start it in the right session")
+    ap.add_argument("--no-launch", action="store_true", help="only send the lap; do not start the game")
+    for c in ("play", "pause", "restart", "stop", "quit"):
         ap.add_argument(f"--{c}", action="store_true")
     a = ap.parse_args()
 
@@ -53,7 +58,7 @@ def main() -> int:
         return 0
     link = ViewerLink()
     for name, cmd in (("play", Command.PLAY), ("pause", Command.PAUSE), ("restart", Command.RESTART),
-                      ("stop", Command.STOP)):
+                      ("stop", Command.STOP), ("quit", Command.QUIT)):
         if getattr(a, name):
             link.command(cmd, speed=a.speed)
             print(f"sent {name}")
@@ -69,7 +74,17 @@ def main() -> int:
     if not key:
         ap.error("give a lap key, --best CAR TRACK, --list or a playback command")
     payload = viewer_payload(key, None if a.no_ghost else "auto")
-    lap_id = link.load(payload, speed=a.speed, loop=not a.no_loop)
+    if a.no_launch:
+        lap_id = link.load(payload, speed=a.speed, loop=not a.no_loop)
+    else:
+        from mv.ac.launch import open_lap_in_game
+        res = open_lap_in_game(payload, link, ghost_car=a.ghost_car, restart=a.restart_game, speed=a.speed)
+        print(res["msg"])
+        if not res["ok"] or res.get("needs_restart"):
+            if res.get("needs_restart"):
+                print("  -> run again with --restart-game to close it and start it in the right session")
+            return 1
+        lap_id = int(link.data.lap_id)
     print(f"sent: {payload['label']}")
     if payload["ghost"] is None:
         print("  (no ghost: no physics reference lap for this car and circuit - see scripts/reference_lap.py)")

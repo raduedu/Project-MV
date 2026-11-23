@@ -294,7 +294,13 @@
         if (opts.onViewInAC && (!opts.canViewInAC || opts.canViewInAC(A))) { const b = document.createElement("button");
           b.textContent = "View in Assetto Corsa" + (B ? " (with this ghost)" : " (with the ideal-lap ghost)");
           b.title = "Plays this lap in the running game (MV Viewer app, offline Practice on this circuit with this car)";
-          b.onclick = () => opts.onViewInAC(A, B); el.actions.appendChild(b); }
+          const lab = document.createElement("label"); lab.className = "hint";
+          lab.title = "Adds one AI car to the session and turns it into the ghost (a real car model instead of a marker)";
+          const cb = document.createElement("input"); cb.type = "checkbox";
+          try { cb.checked = localStorage.getItem("mv_ghost_car") === "1"; } catch (e) {}
+          cb.onchange = () => { try { localStorage.setItem("mv_ghost_car", cb.checked ? "1" : "0"); } catch (e) {} };
+          lab.append(cb, " ghost as a real car");
+          b.onclick = () => opts.onViewInAC(A, B, cb.checked); el.actions.append(b, lab); }
         sectors(); legendKey(); drawCharts(); frame();
       },
       play: setPlay,

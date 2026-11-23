@@ -38,6 +38,7 @@ supersedes it — do not edit history.*
 | D-030 | Section-based realistic circuits (`complex`) as the main training preset | active |
 | D-031 | No imitation of a named real driver; public telemetry only as a benchmark | active |
 | D-032 | Laps are shown in AC by replaying our recorded lap on the game's car (CSP app), not by writing AC replay files | active, first in-game test pending |
+| D-033 | The control panel may start Assetto Corsa for the owner (race.ini rewritten with backup), never on its own | active |
 
 ---
 
@@ -417,3 +418,16 @@ supersedes it — do not edit history.*
   exactly the lap we measured (lap times in the panel stay true), and adds
   what AC's replay cannot: the ideal-lap ghost and its racing line. (c) shows
   AC physics, which is a different (and valuable) question: sim-to-game gap.
+
+### D-033 — Starting the game from the control panel
+
+* **Context.** Until now the rule was: the tooling never starts the game. The
+  owner asked for one click that opens the game in the right session.
+* **Decision.** The "View in Assetto Corsa" button / `ac_view.py` may start
+  the game and rewrite `Documents/Assetto Corsa/cfg/race.ini` - only when the
+  owner clicks, never from training, tests or automation; the game folder is
+  still never written; a running game is closed only after the owner
+  confirms.
+* **Why.** The owner's request, and it is what Content Manager itself does
+  (it writes race.ini and starts acs.exe). Keeping the owner's file as the
+  base and a backup of it keeps personal settings safe.

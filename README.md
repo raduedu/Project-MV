@@ -48,6 +48,8 @@ All commands below are run from the project root with `.venv\Scripts\python.exe`
 
 ## Control panel and terminal command
 
+**Desktop shortcut:** run `.venv\Scripts\python.exe scripts\make_desktop_shortcut.py` once; the "Project MV" icon then opens the control panel (starting it if needed, no terminal).
+
 **Web interface** — `mvctl ui` (from the project folder; in PowerShell `.\mvctl ui`)
 opens **http://127.0.0.1:8765**: live progress of every training, Pause / Resume,
 the training plan (add, reorder, remove jobs), import of Assetto Corsa cars and
@@ -78,7 +80,7 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 | Check the link to the running game | `scripts\ac_bridge_check.py` |
 | Tune a car to match the game (system identification) | record with `scripts\ac_drive.py ... --record x.npz`, then `scripts\sysid_fit.py --vehicle <car> x.npz` |
 | Drive in the game | `scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run` (then see its `--help`) |
-| Show a lap in the game, with the ghost | control panel -> Laps -> Watch -> **View in Assetto Corsa**, or `scripts\ac_view.py --best ks_porsche_911_gt3_rs imola` (setup: docs/07, "Viewing laps in the game") |
+| Show a lap in the game, with the ghost | control panel -> Laps -> Watch -> **View in Assetto Corsa**, or `scripts\ac_view.py --best ks_porsche_911_gt3_rs imola` (the button starts the game on the right circuit and car; setup: docs/07, "Viewing laps in the game") |
 | Run the tests | `-m pytest tests -q` |
 | Publish / update the private GitHub repo | `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` |
 

@@ -41,23 +41,23 @@ from ctypes import c_float, c_int32, c_uint8, c_uint32
 import numpy as np
 
 __all__ = ["VIEWER_MAP", "VIEWER_STATE_MAP", "MAX_SAMPLES", "ViewerData", "ViewerState", "ViewerLink",
-           "viewer_layout", "lap_arrays", "find_ghost", "viewer_payload", "Command"]
+           "viewer_layout", "lap_arrays", "find_ghost", "viewer_payload", "engine_rpm", "Command"]
 
 VIEWER_MAP = "mv_viewer_v1"
 VIEWER_STATE_MAP = "mv_viewer_state_v1"
 VIEWER_MAGIC = 0x3157564D          # "MVW1"
 VIEWER_STATE_MAGIC = 0x3153564D    # "MVS1"
-VIEWER_VERSION = 1
+VIEWER_VERSION = 2                  # 2: engine rpm per sample, QUIT command (WP33)
 MAX_SAMPLES = 12000                 # 8 minutes at 25 Hz - longer than any lap here
 LABEL_LEN = 96
 
 
 class Command:
     """What the in-game app should do (``ViewerData.command``)."""
-    NONE, PLAY, PAUSE, STOP, RESTART = 0, 1, 2, 3, 4
+    NONE, PLAY, PAUSE, STOP, RESTART, QUIT = 0, 1, 2, 3, 4, 5      # QUIT: close the game (to restart it)
 
 
-_CAR_FIELDS = ("t", "x", "y", "yaw", "speed", "steer", "thr", "brk", "gear")
+_CAR_FIELDS = ("t", "x", "y", "yaw", "speed", "steer", "thr", "brk", "gear", "rpm")
 _GHOST_FIELDS = ("t", "x", "y", "yaw", "speed")
 
 
@@ -118,6 +118,28 @@ def lap_arrays(lap: dict, fields=_CAR_FIELDS) -> dict[str, np.ndarray]:
     return out
 
 
+def engine_rpm(speed, gear, vp) -> np.ndarray:
+    """Engine speed (rpm) along a lap, as our simulator computes it (mv/sim/vehicle_sim.py).
+
+    rpm = wheel speed (rad/s) x gear ratio x final drive x 30/pi, never below the
+    launch rpm of a combustion engine (the clutch slips there), never above the
+    limiter. The recorded ``gear`` is 1-based and belongs to the first gearbox,
+    whose driving unit (an engine if there is one) sets the sound in the game.
+    """
+    pt = vp.powertrain
+    gb_key = next(iter(pt.gearboxes))
+    gb = pt.gearboxes[gb_key]
+    units = [u for u in pt.units if u.gearbox == gb_key]
+    u = next((u for u in units if u.kind == "ice"), units[0] if units else pt.units[0])
+    radius = u.front_frac * vp.tire_front.radius_m + (1 - u.front_frac) * vp.tire_rear.radius_m
+    g = np.clip(np.round(np.asarray(gear, float)).astype(int), 1, len(gb.ratios)) - 1
+    ratio = np.asarray(gb.ratios, float)[g] * gb.final_drive
+    rpm = np.asarray(speed, float) / radius * ratio * 30.0 / np.pi
+    if u.kind == "ice":
+        rpm = np.maximum(rpm, u.rpm_idle + 0.35 * (u.rpm_max - u.rpm_idle))
+    return np.minimum(rpm, u.rpm_max)
+
+
 def find_ghost(lap_meta: dict, laps: list[dict]) -> dict | None:
     """Meta of the physics reference lap for the same car and circuit (newest), or None."""
     refs = [m for m in laps if m.get("kind") == "reference" and m.get("car") == lap_meta.get("car")
@@ -146,12 +168,28 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
         ghost = load_lap(gm["key"]) if gm else None
     elif ghost_key:
         ghost = load_lap(ghost_key)
+    car = lap_arrays(lap)
+    vp = _vehicle_for(meta)
+    if vp is not None and np.any(car["gear"]):
+        car["rpm"] = engine_rpm(car["speed"], car["gear"], vp)
     label = f"{meta['driver']} | {meta['car']} @ {meta['track']} | {meta['lap_time']:.3f} s"
     if ghost:
         label += f" | ghost {ghost['meta']['lap_time']:.3f} s"
-    return {"meta": meta, "label": label, "car": lap_arrays(lap),
+    return {"meta": meta, "label": label, "car": car,
             "ghost": lap_arrays(ghost, _GHOST_FIELDS) if ghost else None,
             "ghost_meta": ghost["meta"] if ghost else None}
+
+
+def _vehicle_for(meta: dict):
+    """The car file a lap was driven with (None if it cannot be found)."""
+    from mv.vehicle.params import find_vehicle, load_vehicle
+    for name in (meta.get("car_file"), meta.get("car")):
+        try:
+            if name:
+                return load_vehicle(find_vehicle(name))
+        except FileNotFoundError:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------- shared memory

@@ -299,23 +299,17 @@ def act(path: str, body: dict) -> dict:
         tid = start_task("import", f"Import track {track}", ["scripts/import_ac_track.py", track])
         return {"ok": True, "task": tid, "msg": f"Importing {track} ..."}
     if path == "/api/ac_view":
-        # Show a lap in the running game (MV Viewer app). The mapping stays open for the server's
-        # lifetime, so the game can pick the lap up whenever a session starts (log WP32).
+        # Show a lap in Assetto Corsa: starts the game on the lap's circuit and car if needed
+        # (mv/ac/launch.py, log WP33). The shared-memory link stays open for the server's lifetime.
+        from mv.ac.launch import open_lap_in_game
         from mv.ac.viewer_link import viewer_payload
-        key = body.get("key", "")
-        ghost = body.get("ghost", "auto") or None
-        payload = viewer_payload(key, ghost)
-        link = _viewer_link()
-        link.load(payload, speed=float(body.get("speed", 1.0)), loop=True)
-        st = link.state()
-        where = ("the game has the viewer running - it starts now" if st and st["frame"] else
-                 "start Assetto Corsa (offline Practice, this circuit and car, MV Viewer app installed); "
-                 "it starts when the session loads")
-        return {"ok": True, "msg": f"Sent to Assetto Corsa: {payload['label']}. {where}.", "state": st}
+        payload = viewer_payload(body.get("key", ""), body.get("ghost", "auto") or None)
+        return open_lap_in_game(payload, _viewer_link(), ghost_car=bool(body.get("ghost_car")),
+                                restart=bool(body.get("restart")), speed=float(body.get("speed", 1.0)))
     if path == "/api/ac_view_cmd":
         from mv.ac.viewer_link import Command
         cmd = {"play": Command.PLAY, "pause": Command.PAUSE, "restart": Command.RESTART,
-               "stop": Command.STOP}[body.get("cmd", "")]
+               "stop": Command.STOP, "quit": Command.QUIT}[body.get("cmd", "")]
         _viewer_link().command(cmd, speed=body.get("speed"))
         return {"ok": True, "msg": f"Assetto Corsa viewer: {body.get('cmd')}", "state": _viewer_link().state()}
     if path == "/api/reproduce":

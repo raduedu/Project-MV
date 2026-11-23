@@ -1188,3 +1188,57 @@ lifetime; `ac_view.py` waits until the game reports the lap id as loaded
 game"); then, if per-frame placement looks jerky, a velocity-driven mode with
 position correction. Later: export generated circuits as AC tracks so every
 lap can be shown.
+
+## WP33 — Viewer: gears, engine sound, drift angle; one-click game start; desktop shortcut ✅ (offline tests; in-game check by the owner)
+
+**Objective (owner, 2026-11-23, after the first in-game test of WP32).** "Seems
+quite good, but there are no gear changes"; open the game directly in the
+right settings ("it's just running on my hardware and my version of the
+game"); look and feel as accurate as the lap really is. Plus a desktop
+starter for the control panel.
+
+**Root cause (gears).** The lap data has them (Imola, 911: gears 1-5) and the
+app engaged them, but the game's automatic gearbox - and an H-shifter, which
+CSP warns about - choose their own gear on the next physics step.
+
+**Approach.**
+* Viewer protocol v2: engine rpm per sample, computed in Python exactly like
+  the simulator (wheel speed x gear ratio x final drive, launch rpm floor,
+  limiter) from the car file the lap was driven with; QUIT command.
+* MV Viewer: auto-shifter off while playing (restored after), gear requested
+  through `requestedGearIndex` and forced with `engageGear` when refused,
+  `setEngineRPM` every frame, velocity from the recorded path (drift angle),
+  pause holds the car at that moment.
+* `mv/ac/launch.py`: AC ids of the lap's car and circuit (car files imported
+  from AC carry their AC folder name; cars built from public data such as
+  the Taycan are refused with an explanation); `race.ini` rewritten from the
+  owner's own file (only car, skin, circuit, cars, session, online/replay
+  flags change; backup in `runs/ac_launch/`, last 10); `acs.exe` started
+  detached; running session read from AC's shared memory; restart via the
+  app's `ac.shutdownAssettoCorsa()` only after the owner confirms.
+* Desktop shortcut "Project MV" (`scripts/make_desktop_shortcut.py`, icon
+  drawn into `mv/ui/mv.ico`): `pythonw` + `webui.py start` - starts the
+  control panel without a console window and opens the browser; never starts
+  training.
+
+**Verification.** 8 viewer tests (+3): rpm from gear ratios and limiter;
+`race.ini` keeps weather/driver, replaces car/circuit/session, removes other
+sessions and AI cars, never online, ghost car added on request; the three
+launch cases (game closed -> file written + backup + start; same session ->
+plays; other session -> asks, closes only on request) with the game process
+replaced by a stand-in - **the game was not started by the tooling or the
+tests**. Imola 911 lap: 5 256-8 914 rpm (limiter ~9 000). Shortcut read back
+(target `pythonw.exe`, args `webui.py start`, icon); a windowless start
+brings the panel up (HTTP 200) with training unaffected.
+
+**Problems & resolutions.** (1) Patch scripts with backslashes in Python
+strings corrupted text twice (an INI path in a docstring, a JavaScript
+`\n`); fixed by direct edits - rule kept: no backslashes in generated
+patch strings. (2) An AI car's own driver would fight the ghost placement ->
+AI input off, collisions off.
+
+**Next steps.** Owner: reinstall the apps (`install_plugin.ps1`, the app
+changed) and try the button with the game closed. Open questions for the
+in-game test: does `acs.exe` started directly start the session on this
+install (Content Manager's "naive" start), is the AI ghost car accepted in
+Practice, do the forced gears hold with the owner's H-shifter setting.

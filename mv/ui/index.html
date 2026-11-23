@@ -499,9 +499,18 @@ function getViewer() {
     onReproduce: l => act("/api/reproduce", {key: l.meta.key}).then(() => { show("tools"); }),
     // only laps on circuits imported from Assetto Corsa exist in the game
     canViewInAC: l => ((typeof options !== "undefined" && options && options.tracks) || []).includes(l.meta.track),
-    onViewInAC: (l, g) => act("/api/ac_view", {key: l.meta.key, ghost: g ? g.meta.key : "auto"}),
+    onViewInAC: (l, g, ghostCar) => viewInAC({key: l.meta.key, ghost: g ? g.meta.key : "auto", ghost_car: ghostCar}),
   });
   return viewer;
+}
+// "View in Assetto Corsa": starts the game on the lap's circuit and car; asks before restarting a running game
+async function viewInAC(req) {
+  toast("Assetto Corsa: preparing ...");
+  const j = await act("/api/ac_view", req);
+  if (j && j.needs_restart && confirm(j.msg + " The game will be closed and started again.")) {
+    toast("Closing and restarting Assetto Corsa ...");
+    await act("/api/ac_view", {...req, restart: true});
+  }
 }
 const fetchLap = async key => { const l = await api("/api/lap?key=" + encodeURIComponent(key)); l.meta.key = key; return l; };
 async function watchLap(key, ghostKey) {

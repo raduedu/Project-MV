@@ -28,8 +28,8 @@
 
 local VIEWER_MAGIC = 0x3157564D        -- "MVW1"
 local VIEWER_STATE_MAGIC = 0x3153564D  -- "MVS1"
-local VIEWER_VERSION = 1
-local CMD = { NONE = 0, PLAY = 1, PAUSE = 2, STOP = 3, RESTART = 4 }
+local VIEWER_VERSION = 2
+local CMD = { NONE = 0, PLAY = 1, PAUSE = 2, STOP = 3, RESTART = 4, QUIT = 5 }
 
 local DATA_LAYOUT = [[
 uint32_t magic;
@@ -54,6 +54,7 @@ float car_steer[12000];
 float car_thr[12000];
 float car_brk[12000];
 float car_gear[12000];
+float car_rpm[12000];
 float ghost_t[12000];
 float ghost_x[12000];
 float ghost_y[12000];
@@ -131,7 +132,7 @@ local function tryLoad()
   if s1 % 2 == 1 or data.lap_id == lapId then return end
   local nCar, nGhost = data.n_car, data.n_ghost
   local l = {
-    car = copyArrays('car_', { 't', 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear' }, nCar),
+    car = copyArrays('car_', { 't', 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' }, nCar),
     ghost = nGhost > 1 and copyArrays('ghost_', { 't', 'x', 'y', 'yaw', 'speed' }, nGhost) or nil,
     label = readLabel(), carTime = data.car_lap_time, ghostTime = data.ghost_lap_time,
   }
@@ -181,31 +182,60 @@ end
 
 local function worldDir(yaw) return vec3(math.cos(yaw), 0, -math.sin(yaw)) end
 
+-- The game's automatic gearbox (and an H-shifter) would choose its own gears and hide the
+-- recorded shifts: switch it off while playing, put the owner's setting back afterwards.
+local savedAutoShift = nil
+
+local function takeGearbox()
+  if savedAutoShift == nil then
+    savedAutoShift = car.autoShift and true or false
+    physics.setCarAutoShifter(0, false)
+  end
+end
+
 local function releaseControls()
   if controls then
     controls.steer = math.huge   -- leave the user's steering
     controls.gas, controls.brake, controls.handbrake = 0, 0, 0
     controls.clutch = 1
+    controls.requestedGearIndex = 0
   end
+  if savedAutoShift ~= nil then
+    physics.setCarAutoShifter(0, savedAutoShift)
+    savedAutoShift = nil
+  end
+  lastGear = nil
 end
 
-local function placeCar(s)
+-- Velocity from the recorded path (not along the heading): a sliding car moves at an angle to
+-- where it points, and that drift angle is part of how the lap really looked.
+local function pathVelocity(arr, time)
+  local i = locate(arr, time)
+  local dt = arr.t[i + 1] - arr.t[i]
+  if dt <= 1e-4 then return nil end
+  return vec3((arr.x[i + 1] - arr.x[i]) / dt, 0, -(arr.y[i + 1] - arr.y[i]) / dt)
+end
+
+local function placeCar(s, time)
   local dir = worldDir(s.yaw)
   local pos = vec3(s.x, car.position.y, -s.y)
   physics.setCarPosition(0, pos, dir * dirSign)
-  physics.setCarVelocity(0, dir * s.speed)
+  physics.setCarVelocity(0, pathVelocity(lap.car, time) or dir * s.speed)
+  takeGearbox()
   controls = controls or ac.overrideCarControls(0)
+  local g = math.floor(s.gear + 0.5)
   if controls then
     controls.steer = math.max(-1, math.min(1, -s.steer))
     controls.gas = math.max(0, math.min(1, s.thr))
     controls.brake = math.max(0, math.min(1, s.brk))
     controls.clutch = 1
+    if g >= 1 then controls.requestedGearIndex = g end
   end
-  local g = math.floor(s.gear + 0.5)
-  if g >= 1 and g ~= lastGear then
+  if g >= 1 and (g ~= lastGear or car.gear ~= g) then   -- shift when the lap shifts (and insist if refused)
     physics.engageGear(0, g)
     lastGear = g
   end
+  if s.rpm and s.rpm > 100 then physics.setEngineRPM(0, s.rpm) end   -- engine sound follows the lap
   return dir
 end
 
@@ -245,7 +275,12 @@ local function handleCommand()
   if c == CMD.PLAY then playing = lap ~= nil
   elseif c == CMD.PAUSE then playing = false
   elseif c == CMD.STOP then playing = false; playT = 0; releaseControls()
-  elseif c == CMD.RESTART then playT = 0; ghostIdx = 1; playing = lap ~= nil end
+  elseif c == CMD.RESTART then playT = 0; ghostIdx = 1; playing = lap ~= nil
+  elseif c == CMD.QUIT then                              -- the control panel restarts the game in another session
+    playing = false; releaseControls()
+    local ok, err = pcall(ac.shutdownAssettoCorsa)
+    if not ok then status = 'could not close the game: ' .. tostring(err) end
+  end
 end
 
 local function tick(dt)
@@ -260,8 +295,9 @@ local function tick(dt)
     if playT > lap.carTime then
       if loop then playT = 0; ghostIdx = 1 else playT = lap.carTime; playing = false end
     end
-    local cs = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear' })
-    local dir = placeCar(cs)
+    local cs = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' })
+    cs.gear = lap.car.gear[(locate(lap.car, playT))]      -- gears are steps, not interpolated
+    local dir = placeCar(cs, playT)
     if not dirChecked and frame % 3 == 0 then           -- verify the car faces the way it drives, once
       if car.look:dot(dir) < 0 then dirSign = -dirSign end
       dirChecked = true
@@ -279,8 +315,16 @@ local function tick(dt)
       physics.setCarVelocity(1, gdir * gs.speed)
     end
     status = string.format('playing %.2fx', speed)
+  elseif lap and allowed and playT > 0 and not sim.isPaused then
+    -- paused at a moment of the lap: hold the car there (frozen) so it can be looked at from any camera
+    local cs = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' })
+    cs.gear = lap.car.gear[(locate(lap.car, playT))]
+    placeCar(cs, playT)
+    physics.setCarVelocity(0, vec3(0, 0, 0))
+    status = 'paused (car held at this moment)'
   elseif lap then
-    status = playing and 'paused (game paused)' or 'stopped / paused'
+    if savedAutoShift ~= nil then releaseControls() end   -- lap over / stopped: hand the car back
+    status = sim.isPaused and 'game paused' or 'stopped'
   end
 
   local s = st.seq

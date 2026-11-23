@@ -411,9 +411,16 @@ lap chosen as ghost in the web viewer, e.g. another driver):
 1. Once (and after updates): close AC, run
    `powershell -ExecutionPolicy Bypass -File "D:\Visual Studio\Project MV\mv\ac\plugin\install_plugin.ps1"`
    (installs MV Bridge and MV Viewer).
-2. Content Manager -> Drive -> **Practice**, the lap's circuit and car
-   (add one AI car for a ghost car).
-3. Control panel -> Laps -> Watch a lap -> **View in Assetto Corsa**
+2. Control panel -> Laps -> Watch a lap -> **View in Assetto Corsa**
+   (tick "ghost as a real car" for an AI ghost car). **The game is started by
+   the button** on the lap's circuit and car (WP33): `race.ini` in
+   `Documents/Assetto Corsa/cfg` is rewritten for an offline Practice session
+   - your weather, time of day, temperatures and driver name are kept, the old
+   file is copied to `runs/ac_launch/` first - and `acs.exe` is started (Steam
+   must be running). If the game already runs this car and circuit the lap
+   plays at once; if it runs something else, the panel asks, then the MV Viewer
+   app closes the game and it is started again in the right session.
+3. (Old way, still works: start Practice yourself, then click the button.)
    (or `scripts\ac_view.py --best ks_porsche_911_gt3_rs imola`). It starts by
    itself; the in-game window "MV Viewer" has Play/Pause/Restart/Stop, speed,
    seek and the ghost options.
@@ -429,3 +436,13 @@ of per-frame placement (if the car shakes, the alternative is to set only the
 velocity and correct the position when it drifts), whether an AI car accepts
 being placed every frame, and the sign of `setCarPosition`'s direction (checked
 and flipped once automatically, as in MV Bridge).
+
+**Accuracy of the replay (WP33).** The recorded gear is engaged (the game's
+automatic gearbox is switched off while playing and restored afterwards; the
+gear is requested through the controls and, if refused, forced with
+`physics.engageGear`), the engine speed is set every frame from the car's own
+gear ratios, final drive and tyre radius (`physics.setEngineRPM`), so the
+sound and the rev counter follow the lap, and the car moves along the
+recorded *path* rather than where it points, so slides show their true drift
+angle. Pausing holds the car at that moment (look at a corner from any
+camera); Stop hands the car back.
