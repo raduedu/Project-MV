@@ -546,3 +546,17 @@ def test_zigzag_penalty_hits_only_direction_flips(car):
     expect = 5.0 * np.maximum(0.0, -d[1:] * d[:-1])
     assert np.allclose(diff[1:], expect, atol=1e-6) and diff[1:].sum() > 0
     assert steer_reversals([0, 1, 2, 1, 2, 1], 1.0) == 3.0 and steer_reversals([0, 1, 2, 3], 1.0) == 0.0
+
+
+def test_downshift_point_is_configurable(car):
+    """WP36: the gearbox changes down below downshift_frac x (the lower gear's upshift speed);
+    0.98 keeps the car in (nearly) its strongest gear, 0.93 is the original 7 % band."""
+    old = VehicleSim(car, 1, "cpu")
+    new = VehicleSim(car, 1, "cpu", downshift_frac=0.98)
+    assert torch.equal(old.gb_up_v, new.gb_up_v)                       # upshifts unchanged
+    up = old.gb_up_v[0]
+    n = int(old.gb_ngears[0])
+    assert torch.allclose(old.gb_dn_v[0, 1:n], up[:n - 1] * 0.93)
+    assert torch.allclose(new.gb_dn_v[0, 1:n], up[:n - 1] * 0.98)
+    env = RacingEnv(car, TrackBatch([circle_track()], ds=1.0), 1, EnvConfig(downshift_frac=0.98), device="cpu")
+    assert torch.allclose(env.sim.gb_dn_v, new.gb_dn_v)

@@ -41,6 +41,7 @@ supersedes it — do not edit history.*
 | D-033 | The control panel may start Assetto Corsa for the owner (race.ini rewritten with backup), never on its own | active |
 | D-034 | AC viewer: the real car is steered by forces at the physics rate (no per-frame teleports); ghost = see-through copy of the car model | active, in-game check pending |
 | D-035 | Steering smoothness via a zig-zag penalty (direction flips only), not stronger filtering | under test |
+| D-036 | Gearbox: always (nearly) in the gear with the most wheel force (downshift band 2 % instead of 7 %), adopted only after training with it | under test |
 
 ---
 
@@ -456,3 +457,15 @@ supersedes it — do not edit history.*
 * **Decision.** (c), tested against the same driver without it.
 * **Why.** It removes exactly the sawing without making quick, decisive steering costly - the
   driver keeps its reflexes, which "at the limit" requires.
+
+### D-036 — Gear choice: maximise force at the wheels
+
+* **Context.** The owner: shift where the next gear makes more power. Upshifts already follow the
+  wheel-force crossover; downshifts lagged by a 7 % band, costing 6-19 % pull for up to ~1 s per lap.
+* **Decision.** Option `downshift_frac` (0.98 = 2 % band). Not switched on by default yet: with the
+  same, untrained drivers it changed lap times only within the scatter (and caused one DNF), so it
+  is first trained with (`multi_v5_gearbox`) and adopted if that driver is faster.
+* **Why not RL-chosen gears.** Letting the network pick gears would add actions and change the
+  observation contract (every trained model invalid) for a gain the force-optimal rule already
+  captures; anticipation (e.g. holding a gear into a braking zone) is not needed - measured: no
+  upshifts while lifting/braking.

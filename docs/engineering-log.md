@@ -1376,3 +1376,36 @@ record `steer_reversals` per second.
 **Queued.** `multi_v5_zigzag` (lane 2, after `multi_v4_ctrl`): continues from it with
 `--steer-zigzag 5`, everything else equal, 3 h. Judged by strict lap times (must not be slower)
 and reversals per second.
+
+## WP36 — Always in the gear that pulls hardest 🕓 (option built; training run queued)
+
+**Owner (2026-11-23).** "Sometimes it makes more sense to shift higher, as it will make more
+power in the next gear - it has to know this to maximise our power."
+
+**What the gearbox already did.** Upshift where the next gear gives at least as much force at
+the wheels (from the car's own torque curve) - this is exactly "shift where the next gear makes
+more", and it is why the 911 holds 1st-5th to 8 910 rpm (WP35). Downshifts, however, waited until
+the speed was 7 % below the lower gear's upshift speed (a band against hunting).
+
+**Measured on the best recorded laps** (`gear_loss` script, full throttle > 80 %): the car was
+in a weaker gear than the best one for 0.1-1.3 s per lap (mostly corner exits after braking),
+pulling 6-19 % less in those moments; upshifts while lifting or braking: none. Rough cost:
+~0.1 s per lap at Spa.
+
+**Approach.** `VehicleSim(downshift_frac=...)`, `EnvConfig.downshift_frac`,
+`train.py --downshift-frac`: change down below that share of the lower gear's upshift speed.
+0.98 = always (nearly) in the strongest gear; 0.93 stays the default until tested, so running
+and queued experiments are unchanged. Test `test_downshift_point_is_configurable`.
+
+**Problem.** First version referenced the setting inside the gearbox-table builder where it was
+not in scope - the new test caught it before the queued runs started.
+
+**Same drivers, old vs new gearbox (strict, 5 real circuits x 3 cars):** `multi_v3_cars`:
+mean -0.022 s/lap (faster on 10 of 15); `multi_v2_steer_light`: +0.024 s (6 of 11 faster) and one
+new DNF (Monza, 911). Within the lap-to-lap scatter (+-0.1-0.4 s): drivers trained with the
+later downshift get more pull at corner exits than they expect and sometimes run wide. The
+force is there; the driver has to learn to use it.
+
+**Queued.** `multi_v5_gearbox` (lane 1, after `multi_v4_big`): continues the big driver with
+`--downshift-frac 0.98`, 3 h. Judged by evaluating that driver with both gearboxes (the
+gearbox's own effect for a driver that knows it) and against `multi_v4_big`.

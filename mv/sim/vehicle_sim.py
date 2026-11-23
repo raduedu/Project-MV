@@ -55,8 +55,14 @@ def _pacejka_bc(peak_slip_deg: float, falloff: float) -> tuple[float, float]:
 class VehicleSim:
     """State and physics of ``num_envs`` identical cars (with per-car variations)."""
 
-    def __init__(self, vp: VehicleParams, num_envs: int, device: torch.device | str = "cpu", dt: float = 0.004):
+    def __init__(self, vp: VehicleParams, num_envs: int, device: torch.device | str = "cpu", dt: float = 0.004,
+                 downshift_frac: float = 0.93):
+        """``downshift_frac``: change down once the speed falls below this share of the speed at which
+        the lower gear would have shifted up. 0.93 (original) leaves a 7 % band against hunting; 0.98
+        changes down as soon as the lower gear pulls clearly harder - the car leaves corners in its
+        strongest gear (engineering log WP36)."""
         self.vp, self.n, self.device, self.dt = vp, num_envs, torch.device(device), dt
+        self.downshift_frac = float(downshift_frac)
         dev, f32 = self.device, torch.float32
         c = vp.chassis
 
@@ -196,7 +202,7 @@ class VehicleSim:
                 v_limit = min(0.99 * pt.units[k].rpm_max / (ratio[i, gi] * RPM_PER_RADS) * u_rad[k] for k in units)
                 up_v[i, gi] = min(up_v[i, gi], v_limit)
         dn_v = np.zeros_like(up_v)
-        dn_v[:, 1:] = up_v[:, :-1] * 0.93                    # hysteresis so the box does not hunt
+        dn_v[:, 1:] = up_v[:, :-1] * self.downshift_frac     # hysteresis so the box does not hunt
 
         t = lambda a, dt=torch.float32: torch.as_tensor(np.asarray(a), device=dev, dtype=dt)  # noqa: E731
         self.gb_ratio, self.gb_ngears = t(ratio), t(ngears, torch.long)

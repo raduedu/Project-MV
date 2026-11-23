@@ -91,6 +91,9 @@ class EnvConfig:
     # direction flips from one decision to the next: the 25 Hz sawing measured on the recorded laps
     # (13-22 direction reversals per second vs 0.5 for the ideal lap).
     steer_zigzag_penalty: float = 0.0
+    # Gearbox: change down below this share of the lower gear's upshift speed (VehicleSim, WP36).
+    # 0.93 = original 7 % band; 0.98 = always in (nearly) the gear that pulls hardest.
+    downshift_frac: float = 0.93
     # --- termination ---
     off_track_margin_m: float = 1.0              # car centre this far beyond the edge = crashed
     max_heading_error_rad: float = 1.8
@@ -134,7 +137,7 @@ class RacingEnv:
         self.cfg = cfg = cfg or EnvConfig()
         self.device = dev = torch.device(device)
         self.gen = torch.Generator(device=dev).manual_seed(seed)
-        self.sim = VehicleSim(vp, num_envs, dev, dt=cfg.control_dt / cfg.substeps)
+        self.sim = VehicleSim(vp, num_envs, dev, dt=cfg.control_dt / cfg.substeps, downshift_frac=cfg.downshift_frac)
         ds = tracks.ds
         self.half_width = 0.5 * vp.chassis.width_m
         self.v_cap = 0.92 * top_speed(vp)

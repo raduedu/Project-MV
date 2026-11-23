@@ -168,6 +168,9 @@ def main() -> None:
     ap.add_argument("--steer-zigzag", type=float, default=None,
                     help="penalty on steering zig-zag only (direction flips from one decision to the next), e.g. 5; "
                          "fast steering in one direction stays free (engineering log WP35)")
+    ap.add_argument("--downshift-frac", type=float, default=None,
+                    help="gearbox: change down below this share of the lower gear's upshift speed; 0.98 = always "
+                         "(nearly) in the gear that pulls hardest, default 0.93 (engineering log WP36)")
     ap.add_argument("--min-noise", type=float, default=None,
                     help="floor for the exploration noise (default 0.03)")
     ap.add_argument("--refresh-every", type=int, default=10, help="replace circuits every N updates")
@@ -232,6 +235,8 @@ def main() -> None:
         env_cfg.steer_penalty = args.steer_penalty
     if args.steer_zigzag is not None:
         env_cfg.steer_zigzag_penalty = args.steer_zigzag
+    if args.downshift_frac is not None:
+        env_cfg.downshift_frac = args.downshift_frac
     if args.limit_seeking:
         env_cfg.recover_on_crash = True
         env_cfg.lap_memory = True
