@@ -499,7 +499,7 @@ function getViewer() {
     onReproduce: l => act("/api/reproduce", {key: l.meta.key}).then(() => { show("tools"); }),
     // only laps on circuits imported from Assetto Corsa exist in the game
     canViewInAC: l => ((typeof options !== "undefined" && options && options.tracks) || []).includes(l.meta.track),
-    onViewInAC: (l, g, ghostCar) => viewInAC({key: l.meta.key, ghost: g ? g.meta.key : "auto", ghost_car: ghostCar}),
+    onViewInAC: (l, g) => viewInAC({key: l.meta.key, ghost: g ? g.meta.key : "auto"}),
   });
   return viewer;
 }

@@ -1,34 +1,31 @@
 --[[
-  MV Viewer — CSP Lua app that plays a Project MV lap in Assetto Corsa, with the ghost.
+  MV Viewer — CSP Lua app that plays a Project MV lap in Assetto Corsa, with a see-through ghost.
 
   Installed to: assettocorsa/apps/lua/mv_viewer/   (use mv/ac/plugin/install_plugin.ps1)
-  Python side : mv/ac/viewer_link.py  (web UI button "View in Assetto Corsa", scripts/ac_view.py)
+  Python side : mv/ac/viewer_link.py  (control panel button "View in Assetto Corsa", scripts/ac_view.py)
+  Companion   : mv_follow.lua (physics worker, 333 Hz) - steers the car along the lap with forces.
 
-  Python -> Lua : Local\mv_viewer_v1        (the lap: car + ghost samples, play/pause/stop)
+  Python -> Lua : Local\mv_viewer_v1        (the lap: car + ghost samples, car model, play/pause/stop)
   Lua -> Python : Local\mv_viewer_state_v1  (loaded lap id, play time, gap)
+  The two layouts below MUST match mv/ac/viewer_link.py byte for byte (tests/test_ac_viewer.py).
 
-  The two layouts below MUST match mv/ac/viewer_link.py byte for byte;
-  tests/test_ac_viewer.py checks the text of both blocks against Python.
+  How the lap is shown (engineering log WP34)
+    * "follow" mode (normal): the car stays an ordinary game car - suspension, tyres, gearbox,
+      engine sound, dashboard - and mv_follow.lua pulls it along the recorded path and heading with
+      forces at the physics rate. The car is teleported only at the start, on seek/restart/loop,
+      or if it ends up far from the lap (crash). Steering, pedals and gears follow the recording.
+    * "teleport" mode (fallback if the physics worker cannot start): the car is placed on the
+      recorded pose every frame (WP32/33); works, but the picture is less smooth.
+    * The ghost (ideal lap) is the car's own 3D model loaded a second time, see-through with a blue
+      glow, moved only visually - it has no physics and cannot touch anything.
 
-  What it does every frame while playing:
-    * the player's car is placed where the recorded car was at the play time
-      (physics.setCarPosition: CSP aligns it on the track surface), with the
-      recorded velocity, steering, pedals and gear, so the car model, wheels,
-      steering wheel and brake lights move as in the lap;
-    * the ghost (ideal lap) is a second car if the session has one (collisions
-      off), otherwise a translucent footprint + label; its racing line ahead is
-      drawn, coloured by speed; the time gap is shown.
-
-  Session: Practice on the same circuit and car as the lap. Physics access
-  (physics.allowed) is needed - the window says if it is missing.
-  Map frame -> AC world: AC x = map_x, AC z = -map_y; heading yaw (CCW from
-  +map_x) -> AC direction (cos yaw, 0, -sin yaw). Steering: +1 = left in our
-  files, AC's steer is +1 = right, so it is negated once, here.
+  Frames: AC x = map_x, AC z = -map_y; heading yaw -> AC direction (cos yaw, 0, -sin yaw).
+  Steering: +1 = left in our files, AC's steer is +1 = right: negated once, here.
 ]]
 
 local VIEWER_MAGIC = 0x3157564D        -- "MVW1"
 local VIEWER_STATE_MAGIC = 0x3153564D  -- "MVS1"
-local VIEWER_VERSION = 2
+local VIEWER_VERSION = 3
 local CMD = { NONE = 0, PLAY = 1, PAUSE = 2, STOP = 3, RESTART = 4, QUIT = 5 }
 
 local DATA_LAYOUT = [[
@@ -45,6 +42,9 @@ int32_t n_ghost;
 float car_lap_time;
 float ghost_lap_time;
 uint8_t label[96];
+uint8_t model[160];
+float mass_kg;
+float yaw_inertia_kgm2;
 float car_t[12000];
 float car_x[12000];
 float car_y[12000];
@@ -77,41 +77,67 @@ float play_time;
 float gap_s;
 ]]
 
+-- shared with mv_follow.lua (identical table there)
+local FOLLOW_LAYOUT = {
+  key = ac.StructItem.key('ProjectMV.viewer.follow.v1'),
+  instanceKey = ac.StructItem.int32(),
+  lapId = ac.StructItem.int32(),
+  active = ac.StructItem.int32(),
+  playing = ac.StructItem.int32(),
+  speed = ac.StructItem.float(),
+  seekSeq = ac.StructItem.int32(),
+  seekT = ac.StructItem.float(),
+  stiffness = ac.StructItem.float(),
+  t = ac.StructItem.float(),
+  posErr = ac.StructItem.float(),
+  yawErrDeg = ac.StructItem.float(),
+  atEnd = ac.StructItem.int32(),
+  steps = ac.StructItem.int32(),
+}
+
 local data = ac.writeMemoryMappedFile('mv_viewer_v1', DATA_LAYOUT)
 local st = ac.writeMemoryMappedFile('mv_viewer_state_v1', STATE_LAYOUT)
+local follow = ac.connect(FOLLOW_LAYOUT)
 local sim = ac.getSim()
 local car = ac.getCar(0)
 local U32 = 4294967296
 
 -- ------------------------------------------------------------------ state
-local lap = nil              -- copied lap: {car = {...}, ghost = {...}, label, carTime, ghostTime}
+local lap = nil              -- copied lap: {car = {...}, ghost = {...}, label, model, carTime}
 local lapId = nil
 local cmdSeq = nil
-local playing = false
+local playing = false        -- clock running
+local active = false         -- a lap is being shown (playing or held); false = stopped, car is the user's
 local playT = 0
 local speed = 1.0
 local loop = true
-local rideHeight = 0.5       -- car reference point above the road (m), measured at rest (measureRideHeight)
-local lastGround = nil       -- road height at the last placement of our car / of the ghost car
-local lastGhostGround = nil
-local measureRideHeight      -- defined below (declared here: tryLoad uses it)
-local dirSign = 1            -- meaning of setCarPosition's `dir`: checked every frame (checkDirection)
-local ghostSign = 1          -- the same for the ghost car (setAICarPosition may differ)
-local controls = nil
-local lastGear = nil
-local gap = 0
-local ghostIdx = 1
-local options = { ghostAsCar = true, ghostMarker = true, racingLine = true, lineAheadM = 450 }
+local stiffness = 1.0
 local status = 'waiting for a lap from the MV control panel'
 local frame = 0
-local ghostCarReady = false
-local heights = {}           -- ghost sample index -> ground height (raycast once)
+local gap = 0
+local ghostIdx = 1
+local heights = {}           -- ghost sample index -> road height (racing line drawing)
+local options = { ghost = true, racingLine = true, lineAheadM = 450 }
+local controls = nil
+local savedAutoShift = nil
+local rideHeight = 0.5       -- car reference point above the road (m), measured at rest
+local lastGround = nil
+local dirSign = 1            -- meaning of setCarPosition's `dir`: verified after each placement
+local verify = nil           -- {dir, frames, wrong} while checking a placement
+-- follow worker
+local workerKey = math.floor(os.preciseClock() * 1000) % 2000000000 + 1
+local workerStarted, workerFailed = false, nil
+local lastSteps, lastStepsChange = -1, 0
+-- gears
+local wantGear, gearSince, gearRequested = nil, 0, false
+-- ghost model
+local ghostNode, ghostModel, ghostTried = nil, nil, false
 
 -- ------------------------------------------------------------------ helpers
-local function readLabel()
+local function readString(field, len)
   local chars = {}
-  for i = 0, 95 do
-    local c = data.label[i]
+  for i = 0, len - 1 do
+    local c = data[field][i]
     if c == 0 then break end
     chars[#chars + 1] = string.char(c)
   end
@@ -127,26 +153,6 @@ local function copyArrays(prefix, fields, n)
     out[f] = t
   end
   return out
-end
-
--- Load a new lap when Python published one (seqlock: copy only a consistent version).
-local function tryLoad()
-  if data.magic ~= VIEWER_MAGIC or data.version ~= VIEWER_VERSION then return end
-  local s1 = data.seq
-  if s1 % 2 == 1 or data.lap_id == lapId then return end
-  local nCar, nGhost = data.n_car, data.n_ghost
-  local l = {
-    car = copyArrays('car_', { 't', 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' }, nCar),
-    ghost = nGhost > 1 and copyArrays('ghost_', { 't', 'x', 'y', 'yaw', 'speed' }, nGhost) or nil,
-    label = readLabel(), carTime = data.car_lap_time, ghostTime = data.ghost_lap_time,
-  }
-  local id = data.lap_id
-  if data.seq ~= s1 then return end               -- Python wrote meanwhile: try again next frame
-  lap, lapId = l, id
-  playT, ghostIdx, heights, lastGear = 0, 1, {}, nil
-  lastGround, lastGhostGround = nil, nil
-  if not playing then pcall(measureRideHeight) end     -- usually standing in the pits right now
-  status = 'lap loaded'
 end
 
 -- index i with t[i] <= time < t[i+1] (binary search), and the fraction between them
@@ -176,15 +182,14 @@ local function sample(arr, time, fields)
   for _, k in ipairs(fields) do
     out[k] = k == 'yaw' and lerpAngle(arr.yaw[i], arr.yaw[i + 1], f) or lerp(arr[k][i], arr[k][i + 1], f)
   end
-  return out
+  return out, i
 end
 
--- Height of the road surface under (x, z). Our laps are flat (x, y only), the circuits are not
--- (Spa climbs ~100 m). First fault in the owner's test: the car was placed at its *old* height,
--- below the road, and kept falling. Now: (1) the track's own centre line gives the road height
--- at this point (works from any start height), (2) a short ray down finds the exact surface,
--- (3) a long ray from high above as a last resort.
-local function groundY(x, z, guessY)
+local function worldDir(yaw) return vec3(math.cos(yaw), 0, -math.sin(yaw)) end
+
+-- Road surface under (x, z): height from the track's own centre line (works from any start height:
+-- Spa climbs ~100 m from the pits), then a short ray down; `normalOut` receives the road's normal.
+local function groundY(x, z, guessY, normalOut)
   local y = guessY
   local ok, tc = pcall(ac.worldCoordinateToTrack, vec3(x, guessY, z))
   if ok and tc then
@@ -192,47 +197,22 @@ local function groundY(x, z, guessY)
     if ok2 and w then y = w.y end
   end
   local from = vec3(x, y + 4, z)
-  local d = physics.raycastTrack(from, vec3(0, -1, 0), 12)
+  local d = physics.raycastTrack(from, vec3(0, -1, 0), 12, nil, normalOut)
   if d and d >= 0 then return from.y - d end
   from = vec3(x, y + 300, z)
-  d = physics.raycastTrack(from, vec3(0, -1, 0), 700)
+  d = physics.raycastTrack(from, vec3(0, -1, 0), 700, nil, normalOut)
   if d and d >= 0 then return from.y - d end
   return y
 end
 
--- How high the car's reference point sits above the road when it stands on its wheels; measured
--- while the car is at rest before playing (0.5 m until then), used to place it ON the road.
-function measureRideHeight()                            -- assigns the local declared at the top
-  if car.speedKmh and car.speedKmh < 2 then
+local function measureRideHeight()
+  if (car.speedKmh or 99) < 2 then
     local h = car.position.y - groundY(car.position.x, car.position.z, car.position.y)
     if h > 0.05 and h < 1.5 then rideHeight = h end
   end
 end
 
--- Direction check, continuous: the meaning of setCarPosition's `dir` argument is not documented
--- precisely (mv_bridge found the same). Second fault in the owner's test: the one-time check ran
--- before the game had applied the first placement, so a car facing backwards was never flipped.
--- Now: if the car faces against its intended direction for 3 frames in a row, flip the sign.
-local wrong = { [0] = 0, [1] = 0 }
-local lastDir = {}
-
-local function checkDirection(index, sign)
-  local c = ac.getCar(index)
-  if c and lastDir[index] and c.look:dot(lastDir[index]) < -0.3 then
-    wrong[index] = wrong[index] + 1
-    if wrong[index] >= 3 then wrong[index] = 0; return -sign end
-  else
-    wrong[index] = 0
-  end
-  return sign
-end
-
-local function worldDir(yaw) return vec3(math.cos(yaw), 0, -math.sin(yaw)) end
-
--- The game's automatic gearbox (and an H-shifter) would choose its own gears and hide the
--- recorded shifts: switch it off while playing, put the owner's setting back afterwards.
-local savedAutoShift = nil
-
+-- ------------------------------------------------------------------ the car: gearbox and controls
 local function takeGearbox()
   if savedAutoShift == nil then
     savedAutoShift = car.autoShift and true or false
@@ -240,7 +220,7 @@ local function takeGearbox()
   end
 end
 
-local function releaseControls()
+local function releaseCar()
   if controls then
     controls.steer = math.huge   -- leave the user's steering
     controls.gas, controls.brake, controls.handbrake = 0, 0, 0
@@ -251,42 +231,126 @@ local function releaseControls()
     physics.setCarAutoShifter(0, savedAutoShift)
     savedAutoShift = nil
   end
-  lastGear = nil
+  wantGear, gearRequested = nil, false
+  follow.active = 0
 end
 
--- Velocity from the recorded path (not along the heading): a sliding car moves at an angle to
--- where it points, and that drift angle is part of how the lap really looked.
-local function pathVelocity(arr, time)
-  local i = locate(arr, time)
-  local dt = arr.t[i + 1] - arr.t[i]
-  if dt <= 1e-4 then return nil end
-  return vec3((arr.x[i + 1] - arr.x[i]) / dt, 0, -(arr.y[i + 1] - arr.y[i]) / dt)
-end
-
-local function placeCar(s, time)
-  local dir = worldDir(s.yaw)
-  dirSign = checkDirection(0, dirSign)
-  lastDir[0] = dir
-  lastGround = groundY(s.x, -s.y, lastGround or car.position.y)
-  local pos = vec3(s.x, lastGround + rideHeight + 0.05, -s.y)
-  physics.setCarPosition(0, pos, dir * dirSign)
-  physics.setCarVelocity(0, pathVelocity(lap.car, time) or dir * s.speed)
+-- Recorded steering and pedals every frame. Gears: shift only when the lap shifts (requesting the
+-- gear every frame kept restarting the shift - the "neutral in corners" of WP33); force it only if
+-- the gearbox has not taken it after 0.4 s.
+local function applyInputs(s, gear)
   takeGearbox()
   controls = controls or ac.overrideCarControls(0)
-  local g = math.floor(s.gear + 0.5)
-  if controls then
-    controls.steer = math.max(-1, math.min(1, -s.steer))
-    controls.gas = math.max(0, math.min(1, s.thr))
-    controls.brake = math.max(0, math.min(1, s.brk))
-    controls.clutch = 1
-    if g >= 1 then controls.requestedGearIndex = g end
+  if not controls then return end
+  controls.steer = math.max(-1, math.min(1, -s.steer))
+  controls.gas = math.max(0, math.min(1, s.thr))
+  controls.brake = math.max(0, math.min(1, s.brk))
+  controls.clutch = 1
+  controls.requestedGearIndex = 0
+  local g = math.floor(gear + 0.5)
+  if g < 1 then return end
+  local now = os.preciseClock()
+  if g ~= wantGear then
+    wantGear, gearSince, gearRequested = g, now, false
   end
-  if g >= 1 and (g ~= lastGear or car.gear ~= g) then   -- shift when the lap shifts (and insist if refused)
-    physics.engageGear(0, g)
-    lastGear = g
+  if car.gear ~= g then
+    if not gearRequested then
+      controls.requestedGearIndex = g                      -- one request, like a paddle pull
+      gearRequested = true
+    elseif now - gearSince > 0.4 then
+      physics.engageGear(0, g)
+      gearSince = now
+    end
   end
-  if s.rpm and s.rpm > 100 then physics.setEngineRPM(0, s.rpm) end   -- engine sound follows the lap
-  return dir
+end
+
+-- Put the car on the recorded pose at time T (road height, verified direction) - start/seek/loop only
+local function placeAt(T)
+  local s = sample(lap.car, T, { 'x', 'y', 'yaw', 'speed' })
+  local dir = worldDir(s.yaw)
+  lastGround = groundY(s.x, -s.y, lastGround or car.position.y)
+  physics.setCarPosition(0, vec3(s.x, lastGround + rideHeight + 0.05, -s.y), dir * dirSign)
+  local i = locate(lap.car, T)
+  local a = lap.car
+  local span = math.max(a.t[i + 1] - a.t[i], 1e-4)
+  physics.setCarVelocity(0, vec3((a.x[i + 1] - a.x[i]) / span, 0, -(a.y[i + 1] - a.y[i]) / span))
+  physics.awakeCar(0)
+  verify = { dir = dir, frames = 0, wrong = 0, T = T }
+end
+
+-- After a placement: if the car faces against the intended direction for 3 frames, flip and redo
+local function checkPlacement()
+  if not verify then return end
+  verify.frames = verify.frames + 1
+  if verify.frames < 2 then return end
+  if car.look:dot(verify.dir) < -0.3 then verify.wrong = verify.wrong + 1 else verify.wrong = 0 end
+  if verify.wrong >= 3 then
+    dirSign = -dirSign
+    placeAt(verify.T)
+    return
+  end
+  if verify.frames > 12 then verify = nil end
+end
+
+-- ------------------------------------------------------------------ follow worker
+local function startWorker()
+  if workerStarted or not physics.allowed() then return end
+  workerStarted = true
+  follow.instanceKey = workerKey
+  follow.active = 0
+  local ok, err = pcall(physics.startPhysicsWorker, 'mv_follow', workerKey, function(e)
+    workerFailed = 'follower stopped: ' .. tostring(e)
+  end)
+  if not ok then workerFailed = 'follower could not start: ' .. tostring(err) end
+  lastStepsChange = os.preciseClock()
+end
+
+local function followMode() return workerStarted and not workerFailed end
+
+-- start/seek in follow mode: place the car, then tell the worker where the clock is
+local function seek(T)
+  playT = math.max(0, math.min(T, lap.carTime))
+  placeAt(playT)
+  follow.lapId = lapId
+  follow.seekT = playT
+  follow.seekSeq = follow.seekSeq + 1
+  follow.atEnd = 0
+  ghostIdx = 1
+end
+
+-- ------------------------------------------------------------------ the ghost: see-through car model
+local function ensureGhostModel()
+  if ghostTried or not lap or lap.model == '' then return end
+  ghostTried = true
+  local ok, err = pcall(function()
+    ghostNode = ac.findNodes('carsRoot:yes'):createBoundingSphereNode('mvViewerGhost', 6)
+    ghostModel = ghostNode and ghostNode:loadKN5(lap.model)
+    if ghostModel then
+      ghostModel:setTransparent(true)
+      ghostModel:setBlendMode(render.BlendMode.BlendAdd)        -- additive: see-through, glowing
+      ghostModel:setMaterialProperty('ksEmissive', rgb(0.06, 0.22, 0.55))
+      ghostModel:setShadows(false)
+      ghostModel:excludeFromCubemap(true)
+      ghostModel:excludeFromSecondary(true)
+    end
+  end)
+  if not ok then ac.log('mv_viewer ghost model: ' .. tostring(err)); ghostModel = nil end
+end
+
+local ghostNormal = vec3(0, 1, 0)
+local ghostGround = nil
+
+local function updateGhost()
+  local show = ghostModel ~= nil and options.ghost and active and lap and lap.ghost ~= nil
+  if ghostNode then ghostNode:setVisible(show and true or false) end
+  if not show then return end
+  local gs = sample(lap.ghost, playT, { 'x', 'y', 'yaw' })
+  ghostGround = groundY(gs.x, -gs.y, ghostGround or lastGround or car.position.y, ghostNormal)
+  ghostNode:setPosition(vec3(gs.x, ghostGround + rideHeight, -gs.y))
+  local look = worldDir(gs.yaw)
+  local up = ghostNormal:length() > 0.5 and ghostNormal or vec3(0, 1, 0)
+  look = (look - up * look:dot(up)):normalize()            -- follow the road's slope (Eau Rouge)
+  ghostNode:setOrientation(look, up)
 end
 
 -- Time gap: when did the ghost pass the point where our car is now? (search near the last match)
@@ -301,7 +365,7 @@ local function updateGap(cs)
     local d = dx * dx + dy * dy
     if d < bestD then best, bestD = i, d end
   end
-  if bestD > 900 then                                   -- lost (lap restarted, seek): global search
+  if bestD > 900 then
     for i = 1, n do
       local dx, dy = gh.x[i] - cs.x, gh.y[i] - cs.y
       local d = dx * dx + dy * dy
@@ -312,7 +376,39 @@ local function updateGap(cs)
   gap = playT - gh.t[best]
 end
 
--- ------------------------------------------------------------------ main loop
+-- ------------------------------------------------------------------ loading and commands
+local function tryLoad()
+  if data.magic ~= VIEWER_MAGIC or data.version ~= VIEWER_VERSION then return end
+  local s1 = data.seq
+  if s1 % 2 == 1 or data.lap_id == lapId then return end
+  local nCar, nGhost = data.n_car, data.n_ghost
+  local l = {
+    car = copyArrays('car_', { 't', 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' }, nCar),
+    ghost = nGhost > 1 and copyArrays('ghost_', { 't', 'x', 'y', 'yaw', 'speed' }, nGhost) or nil,
+    label = readString('label', 96), model = readString('model', 160), carTime = data.car_lap_time,
+  }
+  local id = data.lap_id
+  if data.seq ~= s1 then return end
+  if lap and l.model ~= lap.model then                     -- another car: load its model next time
+    if ghostNode then pcall(function() ghostNode:dispose() end) end
+    ghostNode, ghostModel, ghostTried = nil, nil, false
+  end
+  lap, lapId = l, id
+  playT, ghostIdx, heights, lastGround, ghostGround = 0, 1, {}, nil, nil
+  if not active then pcall(measureRideHeight) end
+  status = 'lap loaded'
+end
+
+local function start(T)
+  active, playing = true, true
+  if followMode() then
+    seek(T)
+    follow.active = 1
+  else
+    playT = T
+  end
+end
+
 local function handleCommand()
   if data.magic ~= VIEWER_MAGIC then return end
   local s1 = data.seq
@@ -322,62 +418,76 @@ local function handleCommand()
   cmdSeq = cs
   speed = (sp > 0.05 and sp < 8) and sp or 1
   loop = lp == 1
-  if c == CMD.PLAY then playing = lap ~= nil
+  if not lap then return end
+  if c == CMD.PLAY then
+    if active then playing = true else start(0) end
   elseif c == CMD.PAUSE then playing = false
-  elseif c == CMD.STOP then playing = false; playT = 0; releaseControls()
-  elseif c == CMD.RESTART then playT = 0; ghostIdx = 1; playing = lap ~= nil
-  elseif c == CMD.QUIT then                              -- the control panel restarts the game in another session
-    playing = false; releaseControls()
+  elseif c == CMD.STOP then active, playing, playT = false, false, 0; releaseCar()
+  elseif c == CMD.RESTART then start(0)
+  elseif c == CMD.QUIT then                              -- the control panel restarts the game elsewhere
+    active, playing = false, false; releaseCar()
     local ok, err = pcall(ac.shutdownAssettoCorsa)
     if not ok then status = 'could not close the game: ' .. tostring(err) end
   end
 end
 
+-- ------------------------------------------------------------------ main loop
 local function tick(dt)
   frame = frame + 1
   tryLoad()
-  handleCommand()
   local allowed = physics.allowed()
-  if playing and lap and not allowed then
+  if lap and allowed then startWorker() end
+  if lap then ensureGhostModel() end
+  handleCommand()
+
+  if followMode() and follow.active == 1 then              -- worker alive? (heartbeat)
+    if follow.steps ~= lastSteps then lastSteps, lastStepsChange = follow.steps, os.preciseClock()
+    elseif os.preciseClock() - lastStepsChange > 2 then workerFailed = 'follower stopped responding' end
+  end
+
+  if active and lap and not allowed then
     status = 'no physics access in this session: use offline Practice (see docs chapter 07)'
-  elseif playing and lap and not sim.isPaused then
-    playT = playT + dt * speed
-    if playT > lap.carTime then
-      if loop then playT = 0; ghostIdx = 1 else playT = lap.carTime; playing = false end
-    end
-    local cs = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' })
-    cs.gear = lap.car.gear[(locate(lap.car, playT))]      -- gears are steps, not interpolated
-    placeCar(cs, playT)
-    updateGap(cs)
-    if lap.ghost and options.ghostAsCar and sim.carsCount > 1 then
-      local gs = sample(lap.ghost, playT, { 'x', 'y', 'yaw', 'speed' })
-      local gdir = worldDir(gs.yaw)
-      if not ghostCarReady then                          -- the AI must not drive or collide: it is a ghost
-        physics.disableCarCollisions(1, true)
-        physics.setAINoInput(1, true, false)
-        ghostCarReady = true
+  elseif active and lap and not sim.isPaused then
+    if followMode() then
+      follow.playing = playing and 1 or 0
+      follow.speed = speed
+      follow.stiffness = stiffness
+      follow.active = 1
+      playT = follow.t
+      if follow.atEnd == 1 then
+        if loop then seek(0) else playing = false end
+      elseif follow.posErr > 15 then                       -- crashed / stuck: put it back on the lap
+        seek(playT)
       end
-      ghostSign = checkDirection(1, ghostSign)
-      lastDir[1] = gdir
-      lastGhostGround = groundY(gs.x, -gs.y, lastGhostGround or lastGround or car.position.y)
-      physics.setAICarPosition(1, vec3(gs.x, lastGhostGround + rideHeight + 0.05, -gs.y), gdir * ghostSign)
-      physics.setCarVelocity(1, gdir * gs.speed)
+      checkPlacement()
+    else                                                   -- fallback: place it every frame
+      if playing then
+        playT = playT + dt * speed
+        if playT > lap.carTime then
+          if loop then playT = 0; ghostIdx = 1 else playT = lap.carTime; playing = false end
+        end
+      end
+      local s = sample(lap.car, playT, { 'x', 'y', 'yaw' })
+      local dir = worldDir(s.yaw)
+      lastGround = groundY(s.x, -s.y, lastGround or car.position.y)
+      physics.setCarPosition(0, vec3(s.x, lastGround + rideHeight + 0.05, -s.y), dir * dirSign)
+      local i = locate(lap.car, playT)
+      local a = lap.car
+      local span = math.max(a.t[i + 1] - a.t[i], 1e-4)
+      physics.setCarVelocity(0, playing and vec3((a.x[i + 1] - a.x[i]) / span, 0, -(a.y[i + 1] - a.y[i]) / span)
+        or vec3(0, 0, 0))
+      if car.look:dot(dir) < -0.3 then dirSign = -dirSign end
     end
-    status = string.format('playing %.2fx', speed)
-  elseif lap and allowed and playT > 0 and not sim.isPaused then
-    -- paused at a moment of the lap: hold the car there (frozen) so it can be looked at from any camera
-    local cs = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' })
-    cs.gear = lap.car.gear[(locate(lap.car, playT))]
-    placeCar(cs, playT)
-    physics.setCarVelocity(0, vec3(0, 0, 0))
-    status = 'paused (car held at this moment)'
-  elseif lap then
-    if savedAutoShift ~= nil then releaseControls() end   -- lap over / stopped: hand the car back
-    status = sim.isPaused and 'game paused' or 'stopped'
+    local cs, i = sample(lap.car, playT, { 'x', 'y', 'steer', 'thr', 'brk' })
+    applyInputs(cs, lap.car.gear[i])
+    updateGap(cs)
+    status = (playing and string.format('playing %.2fx', speed) or 'paused (car held at this moment)')
+      .. (followMode() and '' or '  [fallback: per-frame placement - ' .. tostring(workerFailed or 'no worker') .. ']')
+  elseif not active then
+    if frame % 30 == 0 then pcall(measureRideHeight) end   -- standing on its wheels: learn its height
+    if lap then status = sim.isPaused and 'game paused' or 'stopped - press Play' end
   end
-  if not playing and (not lap or playT == 0) and frame % 30 == 0 then
-    pcall(measureRideHeight)                             -- car standing on its wheels: learn its height
-  end
+  pcall(updateGhost)
 
   local s = st.seq
   if s % 2 == 1 then s = s + 1 end
@@ -388,7 +498,7 @@ local function tick(dt)
   st.playing = playing and 1 or 0
   st.physics_allowed = allowed and 1 or 0
   st.cars_count = sim.carsCount or 1
-  st.ghost_is_car = (ghostCarReady and options.ghostAsCar) and 1 or 0
+  st.ghost_is_car = (ghostModel ~= nil) and 1 or 0       -- (v3: 1 = ghost shown as the see-through car model)
   st.play_time = playT
   st.gap_s = gap
   st.seq = (s + 2) % U32
@@ -402,13 +512,13 @@ function script.update(dt)
   end
 end
 
--- ------------------------------------------------------------------ 3D drawing
+-- ------------------------------------------------------------------ 3D drawing: racing line (+ marker fallback)
 local function speedColor(v, vmax)
   local f = math.max(0, math.min(1, v / math.max(vmax, 1)))
   return rgbm(1 - f, f, 0.15, 1)                          -- red = slow, green = fast
 end
 
-local function ghostHeight(i, guess)
+local function lineHeight(i, guess)
   local h = heights[i]
   if not h then
     h = groundY(lap.ghost.x[i], -lap.ghost.y[i], guess)
@@ -418,35 +528,37 @@ local function ghostHeight(i, guess)
 end
 
 local function draw()
-  if not lap or not lap.ghost or not playing then return end
+  if not lap or not lap.ghost or not active then return end
   local gh = lap.ghost
-  local y0 = car.position.y
-  if options.racingLine then                             -- ghost's line ahead, coloured by speed
+  local y0 = lastGround or car.position.y
+  if options.racingLine then
     local vmax = 0
     for i = 1, gh.n do if gh.speed[i] > vmax then vmax = gh.speed[i] end end
-    local dist, i = 0, ghostIdx
-    local prev = nil
+    local dist, i, prev = 0, ghostIdx, nil
     while dist < options.lineAheadM do
-      local j = (i % gh.n) + 1
-      local p = vec3(gh.x[i], ghostHeight(i, y0) + 0.08, -gh.y[i])
+      local p = vec3(gh.x[i], lineHeight(i, y0) + 0.08, -gh.y[i])
       if prev then
         render.debugLine(prev, p, speedColor(gh.speed[i], vmax))
         dist = dist + (p - prev):length()
       end
-      prev, i = p, j
+      prev, i = p, (i % gh.n) + 1
       if i == ghostIdx then break end
     end
   end
-  if options.ghostMarker and not (options.ghostAsCar and sim.carsCount > 1) then
+  if options.ghost and not ghostModel then                 -- no model: a footprint marker instead
     local gs = sample(gh, playT, { 'x', 'y', 'yaw' })
     local f = worldDir(gs.yaw)
-    local l = vec3(-f.z, 0, f.x)                           -- left of the direction (y up)
+    local l = vec3(-f.z, 0, f.x)
     local c = vec3(gs.x, groundY(gs.x, -gs.y, y0) + 0.05, -gs.y)
-    local a, b = f * 2.3, l * 0.95                         -- half length / half width of a car (m)
+    local a, b = f * 2.3, l * 0.95
     render.setBlendMode(render.BlendMode.AlphaBlend)
     render.quad(c + a + b, c + a - b, c - a - b, c - a + b, rgbm(0.3, 0.7, 1, 0.45))
     render.debugArrow(c, c + f * 3.5, 0.6, rgbm(0.3, 0.7, 1, 1))
-    render.debugText(c + vec3(0, 1.6, 0), string.format('GHOST  %+.2f s', -gap), rgbm(0.6, 0.85, 1, 1), 1.2)
+  end
+  if options.ghost then
+    local gs = sample(gh, playT, { 'x', 'y' })
+    render.debugText(vec3(gs.x, (ghostGround or y0) + 2.0, -gs.y), string.format('GHOST  %+.2f s', -gap),
+      rgbm(0.6, 0.85, 1, 1), 1.1)
   end
 end
 
@@ -458,25 +570,32 @@ end)
 -- ------------------------------------------------------------------ window
 function script.windowMain(dt)
   ui.text('MV Viewer')
-  ui.text(status)
+  ui.textWrapped(status)
   if lap then
     ui.textWrapped(lap.label)
     ui.text(string.format('time %.2f / %.2f s   gap to ghost %+.2f s', playT, lap.carTime, gap))
-    if ui.button(playing and 'Pause' or 'Play') then playing = not playing end
+    if followMode() and active then
+      ui.text(string.format('following: %.2f m, %.1f deg off the recorded lap', follow.posErr, follow.yawErrDeg))
+    end
+    if ui.button(active and playing and 'Pause' or 'Play') then
+      if active then playing = not playing else start(0) end
+    end
     ui.sameLine()
-    if ui.button('Restart') then playT, ghostIdx = 0, 1; playing = true end
+    if ui.button('Restart') then start(0) end
     ui.sameLine()
-    if ui.button('Stop') then playing = false; playT = 0; releaseControls() end
+    if ui.button('Stop') then active, playing, playT = false, false, 0; releaseCar() end
     local v, changed = ui.slider('##speed', speed, 0.1, 2.0, 'speed %.2fx')
     if changed then speed = v end
     local t2, moved = ui.slider('##seek', playT, 0, lap.carTime, 'seek %.1f s')
-    if moved then playT = t2 end
-    if ui.checkbox('Ghost as 2nd car (needs a session with 2 cars)', options.ghostAsCar) then
-      options.ghostAsCar = not options.ghostAsCar
+    if moved and active then
+      if followMode() then seek(t2) else playT = t2 end
     end
-    if ui.checkbox('Ghost marker', options.ghostMarker) then options.ghostMarker = not options.ghostMarker end
+    local k, kChanged = ui.slider('##stiff', stiffness, 0.3, 3.0, 'follow stiffness %.1f')
+    if kChanged then stiffness = k end
+    if ui.checkbox('Ghost (see-through car)', options.ghost) then options.ghost = not options.ghost end
     if ui.checkbox('Ghost racing line', options.racingLine) then options.racingLine = not options.racingLine end
     if ui.checkbox('Loop', loop) then loop = not loop end
   end
-  ui.text(string.format('physics.allowed: %s   cars: %d', tostring(physics.allowed()), sim.carsCount or 1))
+  ui.text(string.format('physics.allowed: %s   mode: %s', tostring(physics.allowed()),
+    followMode() and 'follow (forces, 333 Hz)' or 'per-frame placement'))
 end

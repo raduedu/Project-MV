@@ -1279,3 +1279,53 @@ orientation and never flipped. Fix: checked every frame - three frames in a
 row facing against the intended direction flip it - separately for the
 ghost car. Checked offline: both Lua apps parse (luaparser, scratch only),
 no unknown global names; in-game check by the owner.
+
+## WP34 — AC viewer rebuilt: the car is steered by forces, the ghost is a see-through car ✅ (offline checks; in-game check by the owner)
+
+**Owner's report (2026-11-23, Spa, 911, lap 2:41.534 of `multi_v2_steer_light`).** The picture
+is jittery; the car's own dashboard shows nothing; it drops into neutral in some corners; the
+ghost should be a semi-transparent car.
+
+**Root cause (one cause, three symptoms).** WP32/33 teleported the car to the recorded pose on
+every *rendered* frame (60-144 per second) while the game's physics run 333 steps per second:
+between placements the physics moved the car, then it was snapped back - jitter - and every
+placement reset the wheels and drivetrain, so the dashboard read nothing useful and the gearbox
+was knocked out of gear. Requesting the gear on every frame restarted the shift as well.
+
+**Approach.**
+* *Follow by forces* (`mv_follow.lua`, a CSP physics worker, 333 Hz): the car stays a normal car
+  - tyres, suspension, gearbox, engine, dashboard and sound are the game's own - and a
+  critically damped spring-damper pulls it towards the recorded position/velocity (force at its
+  reference point, horizontal) while a force couple at nose and tail turns it towards the
+  recorded heading (with damping on the turning rate). Written with world directions only, so no
+  undocumented sign convention matters. Teleport only at start/seek/restart/loop or if more than
+  15 m off (crash). The worker owns the playback clock (physics time).
+* Gears: requested once per recorded shift, forced with `engageGear` only if not taken after
+  0.4 s; no engine-rpm override any more (the game's own rpm is now right).
+* Ghost: the car's own 3D model (`content/cars/<id>/<model>.kn5`, chosen in Python: largest
+  .kn5 that is not a LOD or the collider), loaded a second time, transparent, additive blue glow,
+  no shadows/reflections, tilted with the road; moved only visually - no AI car, no physics. The
+  "ghost as a real car" option is removed.
+* Fallback: if the physics worker cannot start, per-frame placement as before (the app says so).
+
+**Verification (offline - the game is not run by the tooling).** Protocol v3 (car model path,
+mass, yaw inertia); tests: worker reads the same lap layout as Python, the shared control
+structure is identical in both Lua files, frames/steering/gear rules (138 pass). Both Lua files
+parse (luaparser) and use no unknown names. The controller was simulated in Python with the same
+equations: planar rigid body, the 911's mass 1 517 kg and yaw inertia 1 893 kg m², 333 Hz, along
+the owner's Spa lap:
+
+| Case | Position error mean / 99 % / max | Heading error mean / 99 % |
+|---|---|---|
+| gains x1, no tyres | 0.81 / 1.55 / 1.61 m | 0.22 / 1.29 deg |
+| gains x1, crude tyres resisting every slide (40 kN per m/s) | 1.45 / 5.27 / 5.58 m | 0.22 / 1.29 deg |
+| **gains x1.5 (new default)**, crude tyres | 1.02 / 4.81 / 5.10 m | 0.11 / 0.64 deg |
+| gains x1.5 + 50 % acceleration feed-forward, crude tyres | 1.09 / 5.03 / 5.33 m | 0.11 / 0.64 deg |
+| gains x1.5 + feed-forward 50 %, no tyres | 0.21 / 0.47 / 0.52 m | 0.11 / 0.64 deg |
+
+Feed-forward does not help once tyres act (in the game the tyres, given the recorded steering
+and pedals, already produce most of the acceleration), so it is not used. The crude tyre model
+is pessimistic (real tyres steer with the car instead of fighting every slide).
+
+**Next steps.** Owner: reinstall the apps, try Spa again; the window shows "following: x m, y
+deg" and a stiffness slider (0.3-3). If the worker does not start, the window says "fallback".

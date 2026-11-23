@@ -38,7 +38,7 @@ foreach ($app in $apps) {
     }
     New-Item -ItemType Directory -Force -Path $dst | Out-Null
     Copy-Item -Force (Join-Path $src "manifest.ini") $dst
-    Copy-Item -Force (Join-Path $src "$app.lua") $dst
+    Copy-Item -Force (Join-Path $src "*.lua") $dst          # e.g. mv_viewer.lua + mv_follow.lua (physics worker)
     Write-Host "Installed $app to $dst"
     Get-ChildItem $dst | ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
 }

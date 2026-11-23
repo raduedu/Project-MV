@@ -21,17 +21,27 @@ from mv.ac.viewer_link import (MAX_SAMPLES, VIEWER_STATE_MAGIC, VIEWER_VERSION, 
 
 ROOT = Path(__file__).resolve().parents[1]
 LUA = ROOT / "mv" / "ac" / "plugin" / "apps" / "lua" / "mv_viewer" / "mv_viewer.lua"
+WORKER = LUA.with_name("mv_follow.lua")
 
 
-def _lua_block(name: str) -> str:
-    m = re.search(rf"local {name} = \[\[\n(.*?)\]\]", LUA.read_text(encoding="utf-8"), re.S)
+def _lua_block(name: str, path: Path = LUA) -> str:
+    m = re.search(rf"local {name} = \[\[\n(.*?)\]\]", path.read_text(encoding="utf-8"), re.S)
     assert m, name
     return m.group(1).strip()
+
+
+def _lua_table(name: str, path: Path) -> list[str]:
+    m = re.search(rf"local {name} = \{{\n(.*?)\n\}}", path.read_text(encoding="utf-8"), re.S)
+    assert m, name
+    return [re.sub(r"\s*--.*$", "", line).strip() for line in m.group(1).splitlines()]
 
 
 def test_lua_layouts_match_python():
     assert _lua_block("DATA_LAYOUT") == viewer_layout(ViewerData)
     assert _lua_block("STATE_LAYOUT") == viewer_layout(ViewerState)
+    # the physics worker reads the same lap memory and shares one control structure with the app (WP34)
+    assert _lua_block("DATA_LAYOUT", WORKER) == viewer_layout(ViewerData)
+    assert _lua_table("FOLLOW_LAYOUT", WORKER) == _lua_table("FOLLOW_LAYOUT", LUA)
     text = LUA.read_text(encoding="utf-8")
     assert f"VIEWER_VERSION = {VIEWER_VERSION}" in text
     assert "0x3157564D" in text and "0x3153564D" in text
@@ -44,12 +54,19 @@ def test_lua_uses_the_documented_frames():
     text = LUA.read_text(encoding="utf-8")
     assert "vec3(s.x, lastGround + rideHeight + 0.05, -s.y)" in text      # placed ON the road (WP33 fix)
     assert "groundY(s.x, -s.y," in text and "ac.trackCoordinateToWorld" in text
-    assert "dirSign = checkDirection(0, dirSign)" in text and "ghostSign = checkDirection(1, ghostSign)" in text
+    assert "dirSign = -dirSign" in text                                    # direction verified after placing
     assert "vec3(math.cos(yaw), 0, -math.sin(yaw))" in text
     assert "controls.steer = math.max(-1, math.min(1, -s.steer))" in text
-    # WP33: the recorded gears and engine speed are shown, the game's own gearbox is switched off meanwhile
-    assert "physics.setCarAutoShifter(0, false)" in text and "physics.setEngineRPM(0, s.rpm)" in text
-    assert "controls.requestedGearIndex = g" in text
+    worker = WORKER.read_text(encoding="utf-8")
+    assert "return x0 + (x1 - x0) * fr, -(y0 + (y1 - y0) * fr)" in worker  # same map -> AC frame in the worker
+    assert "math.cos(yaw), -math.sin(yaw)" in worker
+    # WP33/34: recorded gears with the game's own gearbox switched off meanwhile, the gear requested once
+    # per shift (not every frame); engine rpm is the game's own (no override: the car is not teleported)
+    assert "physics.setCarAutoShifter(0, false)" in text and "controls.requestedGearIndex = g" in text
+    assert "setEngineRPM" not in text
+    # WP34: forces from a physics worker, ghost = see-through copy of the car model
+    assert "physics.startPhysicsWorker, 'mv_follow'" in text and "physics.addForce" in worker
+    assert "loadKN5(lap.model)" in text and "setTransparent(true)" in text
 
 
 def _payload(n=500, ghost=True):
@@ -112,7 +129,7 @@ def test_lap_preparation():
 
 def test_structs_have_no_padding_surprises():
     """Lua's FFI lays the struct out like C with 4-byte alignment; so does ctypes with _pack_ = 4."""
-    size = 4 * 12 + 96 + 4 * MAX_SAMPLES * 15
+    size = 4 * 12 + 96 + 160 + 4 * 2 + 4 * MAX_SAMPLES * 15
     assert ctypes.sizeof(ViewerData) == size
     assert ctypes.sizeof(ViewerState) == 4 * 12
 

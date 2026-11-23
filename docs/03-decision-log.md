@@ -39,6 +39,7 @@ supersedes it — do not edit history.*
 | D-031 | No imitation of a named real driver; public telemetry only as a benchmark | active |
 | D-032 | Laps are shown in AC by replaying our recorded lap on the game's car (CSP app), not by writing AC replay files | active, first in-game test pending |
 | D-033 | The control panel may start Assetto Corsa for the owner (race.ini rewritten with backup), never on its own | active |
+| D-034 | AC viewer: the real car is steered by forces at the physics rate (no per-frame teleports); ghost = see-through copy of the car model | active, in-game check pending |
 
 ---
 
@@ -431,3 +432,15 @@ supersedes it — do not edit history.*
 * **Why.** The owner's request, and it is what Content Manager itself does
   (it writes race.ini and starts acs.exe). Keeping the owner's file as the
   base and a backup of it keeps personal settings safe.
+
+### D-034 — How the lap is shown in the game
+
+* **Context.** Per-frame teleports (D-032) worked but the owner saw jitter, an empty dashboard
+  and gears dropping to neutral; the ghost should look like a car.
+* **Options.** (a) Teleport at the physics rate in a worker (still resets wheels/drivetrain).
+  (b) Hide the real car and move a purely visual model (smooth, but no dashboard, sound or
+  telemetry). (c) Keep the real car and steer it with forces at the physics rate.
+* **Decision.** (c) for the car, (b) for the ghost.
+* **Why.** Only (c) keeps everything the owner wants to observe genuine (suspension, gear
+  changes, dashboard, sound) while following the recorded lap closely (offline simulation in
+  WP34). The ghost needs no physics at all, so a visual copy is the smoothest and cannot collide.

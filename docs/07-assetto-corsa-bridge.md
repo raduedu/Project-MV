@@ -446,3 +446,11 @@ sound and the rev counter follow the lap, and the car moves along the
 recorded *path* rather than where it points, so slides show their true drift
 angle. Pausing holds the car at that moment (look at a corner from any
 camera); Stop hands the car back.
+
+**Since WP34 (current design).** The car is no longer placed every frame: a CSP physics worker
+(`mv_follow.lua`, 333 Hz) steers the real car along the recorded lap with forces, so suspension,
+gear changes, rev counter, dashboard and sound are the game's own. The ghost is the car's own 3D
+model shown a second time, see-through with a blue glow (no AI car needed). The in-game window
+shows how far the car is from the recorded lap ("following: x m, y deg") and has a stiffness
+slider: higher = closer to the recording, lower = more of the game's own physics shows. If the
+worker cannot start, the app falls back to per-frame placement and says so.

@@ -7,7 +7,6 @@ your weather, time of day and driver name are kept). Then::
     python scripts/ac_view.py --list                     # laps that can be shown (imported circuits)
     python scripts/ac_view.py --best ks_porsche_911_gt3_rs imola
     python scripts/ac_view.py "local:ks_porsche_911_gt3_rs/imola/2026..._multi_v3_cars" --speed 0.5
-    python scripts/ac_view.py --best ks_porsche_911_gt3_rs imola --ghost-car   # ghost as a real AI car
     python scripts/ac_view.py --pause | --play | --restart | --stop | --quit
 
 The same is one click in the control panel: lap replay -> "View in Assetto Corsa".
@@ -44,7 +43,6 @@ def main() -> int:
     ap.add_argument("--no-ghost", action="store_true")
     ap.add_argument("--no-loop", action="store_true")
     ap.add_argument("--wait", type=float, default=600.0, help="seconds to wait for the game (default 600)")
-    ap.add_argument("--ghost-car", action="store_true", help="add one AI car to the session as the ghost")
     ap.add_argument("--restart-game", action="store_true",
                     help="if the game runs another car/circuit: close it and start it in the right session")
     ap.add_argument("--no-launch", action="store_true", help="only send the lap; do not start the game")
@@ -78,7 +76,7 @@ def main() -> int:
         lap_id = link.load(payload, speed=a.speed, loop=not a.no_loop)
     else:
         from mv.ac.launch import open_lap_in_game
-        res = open_lap_in_game(payload, link, ghost_car=a.ghost_car, restart=a.restart_game, speed=a.speed)
+        res = open_lap_in_game(payload, link, restart=a.restart_game, speed=a.speed)
         print(res["msg"])
         if not res["ok"] or res.get("needs_restart"):
             if res.get("needs_restart"):

@@ -35,6 +35,7 @@ the game).
 from __future__ import annotations
 
 import ctypes
+from pathlib import Path
 import mmap
 from ctypes import c_float, c_int32, c_uint8, c_uint32
 
@@ -47,9 +48,10 @@ VIEWER_MAP = "mv_viewer_v1"
 VIEWER_STATE_MAP = "mv_viewer_state_v1"
 VIEWER_MAGIC = 0x3157564D          # "MVW1"
 VIEWER_STATE_MAGIC = 0x3153564D    # "MVS1"
-VIEWER_VERSION = 2                  # 2: engine rpm per sample, QUIT command (WP33)
+VIEWER_VERSION = 3                  # 2: engine rpm, QUIT (WP33); 3: ghost model, mass/inertia for the force follower (WP34)
 MAX_SAMPLES = 12000                 # 8 minutes at 25 Hz - longer than any lap here
 LABEL_LEN = 96
+MODEL_LEN = 160                     # path of the car model (.kn5) for the see-through ghost, relative to the game folder
 
 
 class Command:
@@ -73,6 +75,8 @@ class ViewerData(ctypes.Structure):
         ("n_car", c_int32), ("n_ghost", c_int32),
         ("car_lap_time", c_float), ("ghost_lap_time", c_float),
         ("label", c_uint8 * LABEL_LEN),
+        ("model", c_uint8 * MODEL_LEN),
+        ("mass_kg", c_float), ("yaw_inertia_kgm2", c_float),   # for the force follower (mv_follow.lua)
         *[(f"car_{f}", c_float * MAX_SAMPLES) for f in _CAR_FIELDS],
         *[(f"ghost_{f}", c_float * MAX_SAMPLES) for f in _GHOST_FIELDS],
     ]
@@ -172,12 +176,35 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
     vp = _vehicle_for(meta)
     if vp is not None and np.any(car["gear"]):
         car["rpm"] = engine_rpm(car["speed"], car["gear"], vp)
+    model = ghost_model_path(meta)
     label = f"{meta['driver']} | {meta['car']} @ {meta['track']} | {meta['lap_time']:.3f} s"
     if ghost:
         label += f" | ghost {ghost['meta']['lap_time']:.3f} s"
-    return {"meta": meta, "label": label, "car": car,
+    return {"meta": meta, "label": label, "car": car, "model": model,
+            "mass_kg": float(vp.chassis.mass_kg) if vp else 1400.0,
+            "yaw_inertia_kgm2": float(vp.chassis.yaw_inertia_kgm2) if vp else 2200.0,
             "ghost": lap_arrays(ghost, _GHOST_FIELDS) if ghost else None,
             "ghost_meta": ghost["meta"] if ghost else None}
+
+
+def ghost_model_path(meta: dict, ac_root=None) -> str:
+    """The car's main 3D model in the game ("content/cars/<id>/<name>.kn5"), or "" if unknown.
+
+    The main model is the largest .kn5 in the car folder that is not a lower-detail
+    copy ("_lod_") or the collision shape ("collider")."""
+    try:
+        from mv.ac.launch import ac_ids_for_lap
+        from mv.ac.paths import find_ac_root
+        car_id = ac_ids_for_lap(meta)[0]
+        root = Path(ac_root) if ac_root else find_ac_root()
+        files = [f for f in (root / "content" / "cars" / car_id).glob("*.kn5")
+                 if "_lod_" not in f.name.lower() and f.stem.lower() != "collider"]
+        if not files:
+            return ""
+        best = max(files, key=lambda f: f.stat().st_size)
+        return f"content/cars/{car_id}/{best.name}"
+    except Exception:
+        return ""
 
 
 def _vehicle_for(meta: dict):
@@ -237,9 +264,13 @@ class ViewerLink:
             d.ghost_lap_time = float(payload["ghost_meta"]["lap_time"])
         else:
             d.n_ghost, d.ghost_lap_time = 0, 0.0
-        raw = payload["label"].encode("utf-8")[:LABEL_LEN - 1]
-        ctypes.memset(d.label, 0, LABEL_LEN)
-        ctypes.memmove(d.label, raw, len(raw))
+        for field, text, size in (("label", payload["label"], LABEL_LEN), ("model", payload.get("model", ""), MODEL_LEN)):
+            raw = text.encode("utf-8")[:size - 1]
+            buf = getattr(d, field)
+            ctypes.memset(buf, 0, size)
+            ctypes.memmove(buf, raw, len(raw))
+        d.mass_kg = float(payload.get("mass_kg", 1400.0))
+        d.yaw_inertia_kgm2 = float(payload.get("yaw_inertia_kgm2", 2200.0))
         d.speed, d.loop = float(speed), int(bool(loop))
         d.lap_id = (int(d.lap_id) + 1) & 0xFFFFFFFF
         d.command = Command.PLAY if play else Command.PAUSE
