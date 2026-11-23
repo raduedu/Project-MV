@@ -181,6 +181,14 @@ def main() -> None:
     ap.add_argument("--warm-start", action="store_true",
                     help="first imitate the rule-based driver, then train (see mv/rl/pretrain.py)")
     ap.add_argument("--warm-steps", type=int, default=600)
+    ap.add_argument("--teacher", type=Path, default=None,
+                    help="warm start by copying an existing trained driver (.pt) - e.g. to give a BIGGER network "
+                         "today's skill before PPO continues (engineering log WP30)")
+    ap.add_argument("--kl-stop", type=float, default=0.0,
+                    help="end a PPO update early once it changed the driver by more than this many times "
+                         "the target (e.g. 4); protects a good driver from one oversized step")
+    ap.add_argument("--hidden", default=None,
+                    help="network size: neurons per hidden layer, e.g. 1024,1024,512 (default 512,256,128)")
     ap.add_argument("--minibatches", type=int, default=None, help="PPO minibatches per epoch (default 4)")
     ap.add_argument("--rollout", type=int, default=None, help="decisions per car between updates (default 32)")
     args = ap.parse_args()
@@ -200,6 +208,10 @@ def main() -> None:
     env_cfg, ppo_cfg = EnvConfig(), PPOConfig()
     if args.minibatches:
         ppo_cfg.minibatches = args.minibatches
+    if args.hidden:
+        ppo_cfg.hidden = tuple(int(x) for x in args.hidden.split(","))
+    if args.kl_stop:
+        ppo_cfg.kl_stop = args.kl_stop
     if args.rollout:
         ppo_cfg.rollout_steps = args.rollout
     if args.min_noise:
@@ -264,7 +276,29 @@ def main() -> None:
         with torch.no_grad():
             ppo.net.log_std.fill_(_math.log(args.reset_noise))
         print(f"exploration noise reset to {args.reset_noise}", flush=True)
-    if args.warm_start and it0 == 0:
+    if args.teacher is not None and it0 == 0:
+        from mv.rl.ppo import load_policy as _load_policy
+        tnet = _load_policy(args.teacher, args.device)
+
+        class _Teacher:                                   # the teacher's best guess, no exploration noise
+            obs_norm = tnet.obs_norm                      # same input scaling -> student copies it
+            def act(self, obs, deterministic=True):
+                return tnet.act(obs, deterministic=True)
+
+        n_params = sum(p.numel() for p in ppo.net.actor.parameters())
+        t_std = float(tnet.log_std.detach().exp().mean())
+        print(f"warm start: a {n_params:,}-parameter driver copies {args.teacher} "
+              f"(teacher noise {t_std:.3f}) ...", flush=True)
+        info = warm_start(ppo, _Teacher(), steps=args.warm_steps, noise=0.1, critic_updates=40,
+                          start_std=args.reset_noise or t_std, buffer_steps=48, grad_steps=4, lr=5e-4)
+        print(f"warm start done: imitation error {info['imitation_error']:.5f}", flush=True)
+        # A fresh optimiser's first steps move EVERY weight by the full learning rate; in a wide
+        # network that rewrites the copied driver in one update (smoke test: KL 450, 0 % of
+        # tracks after update 1).  Start tiny; the KL rule raises it x1.5 per step as allowed.
+        ppo.lr = 1e-5
+        for g in ppo.opt.param_groups:
+            g["lr"] = ppo.lr
+    elif args.warm_start and it0 == 0:
         print("warm start: imitating the rule-based driver ...", flush=True)
         info = warm_start(ppo, env.scripted_teacher(), steps=args.warm_steps)
         print(f"warm start done: imitation error {info['imitation_error']:.4f}", flush=True)

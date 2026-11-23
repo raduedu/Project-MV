@@ -33,7 +33,10 @@ supersedes it — do not edit history.*
 | D-025 | Evaluation is strict, per-car and timed to the crossing instant: every lap reproducible to the millisecond | active |
 | D-026 | Steering smoothness only mild and learned (filter <= 0.03 s and/or jerk penalty), judged by lap time | under test |
 | D-027 | Experiments run on the multi-car driver, not single-car ones | active |
-| D-028 | Car variation told to the driver (descriptor follows the varied car); held-out car files in validation | active, under test |
+| D-028 | Car variation told to the driver (descriptor follows the varied car); held-out car files in validation | active |
+| D-029 | Bigger network (1.7 M) distilled from the best driver instead of trained from zero | active, under test |
+| D-030 | Section-based realistic circuits (`complex`) as the main training preset | active |
+| D-031 | No imitation of a named real driver; public telemetry only as a benchmark | active |
 
 ---
 
@@ -359,3 +362,44 @@ supersedes it — do not edit history.*
   which car it is in. (c) forces it to read the description; together with
   (a) over time it is what makes "add a car file and it drives" true. Held-out
   cars make that claim measurable instead of assumed.
+
+### D-029 — A bigger driver, distilled
+
+* **Options.** (a) Keep 0.2 M parameters, train longer. (b) Bigger network
+  from zero. (c) Bigger network that first copies the best existing driver.
+* **Decision.** (c), with a same-size control run continuing from the same
+  driver on the same circuits, so the gain of size is measured, not assumed.
+* **Why.** Three cars plus car variation plus held-out cars is a lot for
+  0.2 M parameters (the multi-car driver is slower than the single-car one);
+  (b) would waste ~10 GPU-hours of learning. A 1.7 M network still drives in
+  ~1 ms on the laptop's CPU.
+
+### D-030 — Realistic circuits as the main training preset
+
+* **Context.** The owner: generated circuits look like ovals. Measured: they
+  turn about 2 full circles per lap against 3.45 on real circuits.
+* **Decision.** New `complex` preset (sections, chicanes, esses, folding
+  layouts); training mixes `complex+complex+gp`, validation on `complex`.
+  Old presets kept unchanged so earlier results and laps stay reproducible.
+* **Why.** The driver can only learn corner sequences it meets; the real
+  circuits it was weakest on (Imola, the 918 at Monza/Spa) are exactly the
+  chicane and esses sections the old generators lacked.
+
+### D-031 — No imitation of a named real driver
+
+* **Context.** The owner suggested basing the style on Max Verstappen
+  (versatile; drives F1 and GT3).
+* **Decision.** Do not train the driver to imitate a real person. Use
+  public timing/telemetry (e.g. F1 lap times, speed traces) at most as a
+  benchmark, never as training targets; never brand the project with a
+  driver's name.
+* **Why.** (1) The data needed does not exist publicly: F1 public telemetry
+  has speed, throttle, brake on/off, gear and position at ~4 Hz, but no
+  steering, slip or tyre data, and only for F1 cars; GT3 telemetry is not
+  public. (2) Style is car-specific: braking points and lines in an F1 car
+  do not transfer to a 911 or an FS car - the project's goal is the
+  opposite, any car. (3) Rights: data terms and personality rights. (4) The
+  quality admired - versatility across cars - is exactly what car variation
+  and held-out cars (D-028) measure and train. Reinforcement learning
+  against the physics reference lap already aims at the limit, which is
+  what any great driver does.

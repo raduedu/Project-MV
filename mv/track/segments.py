@@ -35,6 +35,32 @@ How a circuit is built
    exactly like the other generator.
 
 Everything is drawn from :class:`SegmentGenConfig`.
+
+Section layout ("complex" preset, engineering log WP31)
+--------------------------------------------------------
+Measured against five real circuits, the feature-by-feature circuits above
+were still "go round once" shapes: total turning about 2 full circles per lap
+where real circuits have 3.5 (Spa 4.7), because real circuits fold back on
+themselves with left and right corners that cancel.  Two details also blunted
+the chicanes: corner softening of up to 15 m smeared a 20 m chicane into a
+kink, and the gap between the two chicane corners was treated as an ordinary
+straight, which the loop closure stretches to at least 15 m.
+
+``layout="sections"`` builds a lap from **sections**, the way circuits are
+designed:
+
+* *fast*: a long straight into a heavy-braking feature (hairpin, chicane or
+  slow corner) - Monza, the end of Spa's Kemmel straight;
+* *technical*: two to four slow features close together - slow corners,
+  hairpins, chicanes, double-apex corners, tightening corners;
+* *flowing*: esses (three to five alternating medium-speed corners, Mugello's
+  Arrabbiata, Spa's Eau Rouge) or long fast sweepers.
+
+Straights between sections may carry a flat-out kink.  Gaps *inside* a
+feature (between chicane corners, between esses) are kept fixed ("G" items)
+so the loop closure cannot stretch them, and corner softening is short
+(2-6 m).  Whole features may be mirrored (left <-> right) until the turning
+adds up to one circle, so chicanes and esses keep their shape.
 """
 
 from __future__ import annotations
@@ -75,6 +101,15 @@ class SegmentGenConfig:
     max_length_m: float = 7500.0                       # longer laps are rejected (0 = no limit)
     ds: float = 1.0
     max_tries: int = 400
+    # ---- section layout (layout="sections", WP31); unused by the feature layout ----
+    layout: str = "features"                            # "features" (original) or "sections"
+    n_sections: tuple[int, int] = (4, 7)
+    p_fast: float = 0.35                                # section mix; the rest is "flowing"
+    p_technical: float = 0.42
+    link_m: tuple[float, float] = (80.0, 500.0)         # straights between sections (log-uniform)
+    tech_link_m: tuple[float, float] = (25.0, 180.0)    # straights inside a technical section
+    p_kink: float = 0.35                                # straight carries a flat-out kink
+    max_stretch: float = 0.0                            # closure may add at most this share of the lap (0 = no limit)
 
 
 SEGMENT_PRESETS: dict[str, SegmentGenConfig] = {
@@ -88,6 +123,14 @@ SEGMENT_PRESETS: dict[str, SegmentGenConfig] = {
         hairpin_radius_m=(4.6, 7.0), hairpin_angle_deg=(150.0, 190.0), chicane_radius_m=(4.6, 10.0),
         chicane_angle_deg=(25.0, 70.0), chicane_gap_m=(0.0, 6.0), transition_m=(1.0, 4.0),
         min_straight_m=4.0, min_radius_m=4.5, min_clearance_m=3.0, max_length_m=600.0, ds=0.5),
+    # Grand-prix-like circuits built from sections, closer to real circuits in
+    # shape (folding back on themselves), chicanes, esses and corner complexes (WP31).
+    "complex": SegmentGenConfig(
+        layout="sections", width_m=(10.0, 15.0), long_straight_m=(400.0, 1100.0),
+        hairpin_radius_m=(11.0, 20.0), hairpin_angle_deg=(150.0, 195.0),
+        chicane_radius_m=(12.0, 30.0), chicane_angle_deg=(35.0, 80.0), chicane_gap_m=(0.0, 15.0),
+        n_sections=(5, 9), p_fast=0.25, p_technical=0.4, max_stretch=0.35,
+        p_counter_turn=0.4, transition_m=(2.0, 6.0), max_tries=3000),
 }
 
 
@@ -123,6 +166,111 @@ def _draw_features(rng: np.random.Generator, cfg: SegmentGenConfig) -> list[tupl
     return items
 
 
+def _draw_sections(rng: np.random.Generator, cfg: SegmentGenConfig) -> list[tuple[str, float, float]]:
+    """Section layout (WP31): returns the lap as ('S'|'G', length, 0) and ('C', radius, angle) items.
+
+    'S' straights may be lengthened by the loop closure, 'G' gaps (inside a
+    chicane or esses) keep their length.
+    """
+    deg = math.radians
+    groups: list[list[tuple[str, float, float]]] = []       # one group = one feature, mirrored as a whole
+
+    def side() -> float:
+        return 1.0                                           # signs are balanced afterwards by mirroring groups
+
+    def chicane() -> list:
+        a = deg(rng.uniform(*cfg.chicane_angle_deg))
+        g = [("C", rng.uniform(*cfg.chicane_radius_m), a)]
+        gap = rng.uniform(*cfg.chicane_gap_m)
+        if gap > 0.5:
+            g.append(("G", gap, 0.0))
+        g.append(("C", rng.uniform(*cfg.chicane_radius_m), -a * rng.uniform(0.8, 1.25)))
+        return g
+
+    def hairpin() -> list:
+        return [("C", rng.uniform(*cfg.hairpin_radius_m), deg(rng.uniform(*cfg.hairpin_angle_deg)))]
+
+    def slow_corner() -> list:
+        return [("C", rng.uniform(12.0, 45.0), deg(rng.uniform(35.0, 130.0)))]
+
+    def double_apex() -> list:
+        return [("C", rng.uniform(25.0, 70.0), deg(rng.uniform(40.0, 90.0))), ("G", rng.uniform(5.0, 40.0), 0.0),
+                ("C", rng.uniform(25.0, 70.0), deg(rng.uniform(40.0, 90.0)))]
+
+    def tightening() -> list:                                # fast entry, then the corner closes up
+        return [("C", rng.uniform(60.0, 120.0), deg(rng.uniform(30.0, 60.0))),
+                ("C", rng.uniform(20.0, 40.0), deg(rng.uniform(40.0, 80.0)))]
+
+    def esses() -> list:
+        g, sign = [], 1.0
+        for i in range(int(rng.integers(3, 6))):
+            if i:
+                gap = rng.uniform(0.0, 40.0)
+                if gap > 0.5:
+                    g.append(("G", gap, 0.0))
+            g.append(("C", _loguniform(rng, 45.0, 180.0), sign * deg(rng.uniform(25.0, 65.0))))
+            sign = -sign
+        return g
+
+    def medium_corner() -> list:
+        return [("C", _loguniform(rng, 45.0, 150.0), deg(rng.uniform(30.0, 110.0)))]
+
+    def sweeper() -> list:
+        return [("C", _loguniform(rng, 120.0, 400.0), deg(rng.uniform(40.0, 120.0)))]
+
+    def straight(lo_hi) -> list:
+        length = _loguniform(rng, *lo_hi)
+        if length > 150.0 and rng.random() < cfg.p_kink:     # flat-out kink in the middle of a straight
+            a = deg(rng.uniform(4.0, 12.0))
+            f = rng.uniform(0.3, 0.7)
+            return [("S", f * length, 0.0), ("C", rng.uniform(400.0, 900.0), a), ("S", (1 - f) * length, 0.0)]
+        return [("S", length, 0.0)]
+
+    def pick(options):
+        r, acc = rng.random(), 0.0
+        for prob, fn in options:
+            acc += prob
+            if r < acc:
+                return fn()
+        return options[-1][1]()
+
+    for _ in range(int(rng.integers(cfg.n_sections[0], cfg.n_sections[1] + 1))):
+        groups.append(straight(cfg.link_m))
+        r = rng.random()
+        if r < cfg.p_fast:
+            groups.append([("S", rng.uniform(*cfg.long_straight_m), 0.0)])
+            groups.append(pick([(0.3, hairpin), (0.35, chicane), (1.0, slow_corner)]))
+        elif r < cfg.p_fast + cfg.p_technical:
+            for k in range(int(rng.integers(2, 5))):
+                if k:
+                    groups.append(straight(cfg.tech_link_m))
+                groups.append(pick([(0.2, slow_corner), (0.25, medium_corner), (0.1, hairpin), (0.15, chicane),
+                                    (0.15, double_apex), (1.0, tightening)]))
+        else:
+            groups.append(pick([(0.45, esses), (0.25, medium_corner), (1.0, sweeper)]))
+
+    # random mirroring of whole features, then mirror more until the turning can be normalised
+    def net(gs):
+        return [sum(b for k, _, b in g if k == "C") for g in gs]
+
+    for g in groups:
+        if rng.random() < cfg.p_counter_turn:
+            g[:] = [(k, a, -b) for k, a, b in g]
+    for _ in range(40):
+        nets = net(groups)
+        pos = sum(x for x in nets if x > 0)
+        neg = sum(x for x in nets if x < 0)
+        k = (2 * math.pi - neg) / pos if pos > 0 else 99.0
+        if 0.6 < k < 1.7:
+            break
+        want = [i for i, x in enumerate(nets) if (x < -0.05 if k >= 1.7 else x > 0.05)]
+        if not want:
+            break
+        i = want[int(rng.integers(len(want)))]
+        groups[i] = [(kk, a, -b) for kk, a, b in groups[i]]
+    return [item for g in groups for item in g]
+
+
 def _normalise_turning(items: list[tuple[str, float, float]]) -> list[tuple[str, float, float]] | None:
     """Scale corners so that the total turning is +2*pi (a counter-clockwise loop)."""
     pos = sum(a for k, _, a in items if k == "C" and a > 0)
@@ -145,10 +293,11 @@ def _curvature(items, ds: float, transition_m: float) -> tuple[np.ndarray, list[
     """Curvature samples along the lap and the index range of every straight."""
     kappa, straight_idx, pos = [], [], 0
     for kind, a, b in items:
-        if kind == "S":
+        if kind in ("S", "G"):                       # "G" = fixed gap: straight, but not resized
             n = max(int(round(a / ds)), 1)
             kappa.append(np.zeros(n))
-            straight_idx.append(slice(pos, pos + n))
+            if kind == "S":
+                straight_idx.append(slice(pos, pos + n))
         else:
             n = max(int(round(a * abs(b) / ds)), 1)
             # exact heading change: n samples of curvature k give n * k * ds = angle
@@ -166,11 +315,14 @@ def _integrate(kappa: np.ndarray, ds: float) -> np.ndarray:
 
 
 def _closed_centerline(rng: np.random.Generator, cfg: SegmentGenConfig) -> np.ndarray | None:
-    items = _normalise_turning(_draw_features(rng, cfg))
+    draw = _draw_sections if cfg.layout == "sections" else _draw_features
+    items = _normalise_turning(draw(rng, cfg))
     if items is None:
         return None
     ds = cfg.ds
     transition = rng.uniform(*cfg.transition_m)
+    lap0 = sum(a if kind != "C" else a * abs(b) for kind, a, b in items)
+    stretched = 0.0
     for _ in range(8):                                      # converges in ~3-5 passes
         kappa, straights = _curvature(items, ds, transition)
         xy, psi = _integrate(kappa, ds)
@@ -199,6 +351,9 @@ def _closed_centerline(rng: np.random.Generator, cfg: SegmentGenConfig) -> np.nd
         sol = lsq_linear(A, rhs, bounds=(cfg.min_straight_m - lengths, np.inf))
         delta = sol.x
         if np.linalg.norm(dirs @ delta + miss) > 1.0:
+            return None
+        stretched += float(np.abs(delta).sum())
+        if cfg.max_stretch and stretched > cfg.max_stretch * lap0:   # closure would dominate the layout
             return None
         j = 0
         new = []

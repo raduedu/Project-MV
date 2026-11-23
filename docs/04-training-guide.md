@@ -28,13 +28,16 @@ driver never trains on them.
 | `--name` | Folder under `runs/` | Use a new name per experiment |
 | `--envs` | Cars driving in parallel | 8 192–16 384 on this GPU. More cars = more decisions per second at almost no cost |
 | `--tracks` | Size of the pool of random circuits | 256–512. 10 % are replaced every 10 updates |
-| `--preset` | Track generator(s): `mixed` (default), `circuit`, `gp`, `fs`, `fs_segments`; combine with `+` | **Recommended: `mixed+gp`** — `gp` adds long straights into slow corners and chicanes (engineering log WP13–14). FS scale: `fs+fs_segments` |
+| `--preset` | Track generator(s): `mixed` (default), `circuit`, `gp`, `complex`, `fs`, `fs_segments`; combine with `+` (repeat a name to weight it) | **Recommended: `complex+complex+gp`** — `complex` builds realistic circuits from sections: chicanes, esses, hairpins, layouts that fold back on themselves (engineering log WP31); `gp` adds long straights into slow corners. FS scale: `fs+fs_segments` |
 | `--val-preset` | Generator for the random validation tracks | Keep it fixed between runs you want to compare |
 | `--init-from` | Start from an existing driver's weights | For fine-tuning on new tracks or a similar car. Also works when the new observation has extra inputs at the end (e.g. `--history`) |
 | `--history N` | Memory: N past samples of the car state (0.12 s apart) | 8 ≈ the last second. Changes the observation size |
 | `--grip-range LOW HIGH` | Hidden tyre-grip variation per episode | Default 0.88 1.05 |
 | `--reset-noise X` / `--min-noise X` | Exploration noise at the start / its floor | For fine-tuning a converged driver: e.g. 0.1 / 0.06 |
 | `--vehicle a,b,c` | One driver for several cars | Fleet is split evenly between them |
+| `--hidden 1024,1024,512` | Network size (neurons per layer) | Default 512,256,128. Bigger = more capacity; 1.7 M parameters still drive in ~1 ms on the CPU (WP30) |
+| `--teacher PATH` | Warm start by copying a trained driver (distillation), e.g. into a bigger network | Use with `--hidden`; the observation layout must match the teacher's |
+| `--kl-stop X` | End a PPO update early when it changed the driver by more than X times the target | 4 protects a good driver from one oversized step (WP30) |
 | `--limit-seeking` | Going off costs time (car rejoins) instead of ending the episode; lap memory; 240 s episodes | The owner's "always at the limit" principle (architecture §1b). Changes the observation size |
 | `--episode-s S` | Episode length | Default 60 s (240 s with `--limit-seeking`) |
 | `--hours` / `--steps` / `--iters` | When to stop | Any one of them |

@@ -22,7 +22,7 @@ driverless car; the first test bed is Assetto Corsa.
 |---|---|---|
 | **Car file** | Every number that defines a car: mass, power curve, gears, tyres, aerodynamics, brakes, battery. Combustion, hybrid and electric all fit the same format. | A car's spec sheet, but complete |
 | **Simulator** | Our own physics engine that runs **thousands of cars at once** on the laptop's GPU: tyres, weight transfer, downforce, gearboxes, motors, battery. | A driving school with 16 000 cars driving simultaneously |
-| **Track generator** | Invents a new random circuit whenever needed — straights, hairpins, chicanes, fast sweepers — at road-circuit or Formula Student scale. | A never-ending supply of unseen tracks |
+| **Track generator** | Invents a new random circuit whenever needed, built from sections like a real circuit designer would: fast straights into heavy braking, technical parts with hairpins and chicanes, flowing esses and sweepers, at road-circuit or Formula Student scale. | A never-ending supply of unseen tracks |
 | **The driver** | A neural network that learns from reward: *metres of progress per second*, minus a penalty for leaving the track. | The student |
 
 Why our own simulator: Assetto Corsa runs one car in real time. Learning needs
@@ -57,6 +57,17 @@ memorise circuits. It has to *read the road*, like a human on an unknown track.
   the perfect lap, or download the raw data.
 * **Real circuits are only ever used for testing**, never for training.
 * **125 automated tests** check physics, sensors, lap timing and tools.
+
+### What is the "ghost" / "physics ideal"?
+
+It is **not** Assetto Corsa's ghost car and not a learned driver. Our own code
+(`mv/planning`) computes it from the car file and the track: first the most
+grip the car can use at every speed (cornering, braking and accelerating
+combined), then the racing line that allows the highest speeds, then the
+fastest possible speed along that line. It drives "perfectly" with no
+reaction time, no mistakes and perfect knowledge of the grip, so it is
+0.5–2 % *faster* than any real lap could be. It is the yardstick: the
+learned driver's gap to it says how much is left on the table.
 
 ## 5. Results so far
 
@@ -112,7 +123,7 @@ Recorded in full in the engineering log — the important ones:
 
 ## 8. What comes next
 
-1. One driver for several cars (in progress), then any car.
+1. One driver for several cars (works, including car files it never trained on); now a bigger network trained on more realistic circuits.
 2. First drive inside Assetto Corsa (the connection is built and tested offline).
 3. Tune the simulator to match Assetto Corsa from recorded laps (tool built).
 4. Make the limit-seeking driver fast *and* clean.

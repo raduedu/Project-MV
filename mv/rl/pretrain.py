@@ -37,18 +37,46 @@ __all__ = ["warm_start"]
 
 
 def warm_start(ppo, teacher, steps: int = 600, noise: float = 0.25, lr: float = 1e-3, critic_updates: int = 15,
-               start_std: float = 0.25, printer=print) -> dict:
+               start_std: float = 0.25, printer=print, buffer_steps: int = 0, grad_steps: int = 1,
+               batch: int = 16384) -> dict:
     """Clone ``teacher`` into ``ppo.net`` using the PPO's own environment.
 
     ``steps`` environment steps are taken (each yields ``env.n`` labelled
     samples).  Returns a small dict of diagnostics.
+
+    Two modes:
+
+    * ``buffer_steps=0`` (default, for the rule-based teacher): one gradient
+      step per environment step on the newest states.
+    * ``buffer_steps>0`` (*distillation*, for copying a trained network into a
+      bigger one, log WP30): the newest ``buffer_steps`` steps of states are
+      kept in memory and ``grad_steps`` random mini-batches of ``batch``
+      samples are learned per environment step, with the learning rate
+      lowered smoothly to 5 % by the end.  A big network needs many more
+      passes than one per step to copy a driver closely; a rough copy crashes
+      and PPO then has to relearn what the teacher already knew.
+
+    If the teacher carries an input scaler (``obs_norm``) of the same size it
+    is copied and frozen, so student and teacher see identical numbers.
     """
     env, net = ppo.env, ppo.net
+    tnorm = getattr(teacher, "obs_norm", None)
+    copy_norm = tnorm is not None and tuple(tnorm.mean.shape) == tuple(net.obs_norm.mean.shape)
+    if copy_norm:
+        net.obs_norm.load_state_dict(tnorm.state_dict())
     opt = torch.optim.Adam(net.actor.parameters(), lr=lr)
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda k: 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * min(1.0, k / max(1, steps * grad_steps)))))
+    cap = buffer_steps * env.n
+    if cap:
+        buf_o = torch.empty((cap, env.num_obs), device=env.device)
+        buf_t = torch.empty((cap, env.num_actions), device=env.device)
+        filled, head = 0, 0
     obs = env.observe()
     loss_avg, crashes, episodes = None, 0, 0
     for i in range(steps):
-        net.obs_norm.update(obs)
+        if not copy_norm:
+            net.obs_norm.update(obs)
         with torch.no_grad():
             target, _, _ = teacher.act(obs)
             # who drives this step?  teacher early on, student later (per car, at random)
@@ -56,17 +84,30 @@ def warm_start(ppo, teacher, steps: int = 600, noise: float = 0.25, lr: float = 
             student_drives = torch.rand(env.n, device=env.device) < share
             drive = torch.where(student_drives[:, None], net.actor(net.obs_norm(obs)), target)
             drive = (drive + noise * torch.randn_like(drive)).clamp(-1, 1)
-        pred = net.actor(net.obs_norm(obs))
-        loss = ((pred - target) ** 2).mean()
-        opt.zero_grad(set_to_none=True)
-        loss.backward()
-        opt.step()
+        if cap:
+            n = obs.shape[0]
+            idx = (torch.arange(n, device=env.device) + head) % cap
+            buf_o[idx], buf_t[idx] = obs, target
+            head, filled = (head + n) % cap, min(cap, filled + n)
+            for _ in range(grad_steps):
+                j = torch.randint(0, filled, (min(batch, filled),), device=env.device)
+                loss = ((net.actor(net.obs_norm(buf_o[j])) - buf_t[j]) ** 2).mean()
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
+                sched.step()
+        else:
+            pred = net.actor(net.obs_norm(obs))
+            loss = ((pred - target) ** 2).mean()
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
         loss_avg = float(loss.detach()) if loss_avg is None else 0.98 * loss_avg + 0.02 * float(loss.detach())
         obs, _, term, trunc, _ = env.step(drive)
         crashes += int(term.sum()); episodes += int((term | trunc).sum())
         if (i + 1) % 100 == 0:
-            printer(f"  warm start {i + 1}/{steps}: imitation error {loss_avg:.4f}, "
-                    f"student driving {share * 100:.0f} % of cars")
+            printer(f"  warm start {i + 1}/{steps}: imitation error {loss_avg:.5f}, "
+                    f"student driving {share * 100:.0f} % of cars, crashes so far {crashes}")
     with torch.no_grad():
         net.log_std.fill_(math.log(start_std))
     ppo.obs = env.observe()

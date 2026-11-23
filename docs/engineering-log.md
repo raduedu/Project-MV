@@ -927,7 +927,7 @@ Older evaluation laps (batched, step-quantised) were moved to
 `runs/laps_superseded` and re-recorded; laps saved by training before this
 change still reproduce "within numerical noise" (the script says so).
 
-## WP27 — Steering smoothness 🕓 (settings built; experiment running)
+## WP27 — Steering smoothness ✅ (mild learned smoothing kept)
 
 **Observation (owner).** The driver's steering is jittery and probably costs
 time. Measured "steering activity" (total wheel travel per second, in
@@ -954,8 +954,29 @@ then — at the owner's question "why not the multi-car one?" — stopped after
 a single-car driver cannot drive other car files (25.2): running (2.5 h each,
 from `multi_v1`, 911 + 918 + Taycan): `multi_v2_steer_light` (filter 0.03 s +
 penalty 0.2) vs `multi_v2_steer_penalty` (penalty 0.5, no filter = no lag).
-Judged by strict lap times first, steering activity second. *Results to be
-appended.*
+Judged by strict lap times first, steering activity second.
+
+**Results (2026-11-23).** Steering activity halved or better, and the *light*
+variant is the fastest multi-car driver so far:
+
+| Driver (strict, 5 real circuits) | Completed | 911 gap | 918 gap | Taycan gap | Steering activity |
+|---|---|---|---|---|---|
+| `multi_v1` (no smoothing) | 10/15 | +4.3 % | +5.8 % | +6.1 % | 1.2 /s |
+| `multi_v2_steer_light` (filter 0.03 s + penalty 0.2) | 12/15 | **+4.0 %** | +5.9 % | **+4.8 %** | 0.3-0.6 /s |
+| `multi_v2_steer_penalty` (penalty 0.5) | 14/15 | +4.2 % | +7.0 % | +5.1 % | 0.3-0.6 /s |
+| `multi_v3_cars` (car variation, penalty 0.3) | **15/15** | +4.4 % | +7.3 % | +5.8 % | 0.4-0.8 /s |
+
+*Gap = mean over the circuits that car completed, against the physics
+reference lap. Steering activity = wheel travel per second in fractions of
+full lock (the reference lap: ~0.02 /s).*
+
+**Interpretation.** Mild, learned smoothing does not cost lap time - it gained
+0.3-1.3 %. What costs time is *reliability*: the drivers that finish more
+circuits are 1-2 % slower where they finish (the 918 most). The owner's
+impression "smooth but slower" was the 15/15 car-variation driver, which is
+slower because it also learned to drive car files it has never seen (WP29),
+not because it is smooth. → Keep the light setting (filter 0.03 s + penalty
+0.2) for the next runs (WP30).
 
 ## WP28 — Shared replay viewer and published replay page ✅
 
@@ -974,7 +995,7 @@ appended.*
 * `CLAUDE.md` (assistant working notes) is no longer published (owner's
   request): untracked, git-ignored and blocked by the publish safety check.
 
-## WP29 — Car variation: learning to read the car 🕓 (built; runs queued)
+## WP29 — Car variation: learning to read the car ✅
 
 **Problem (25.2).** A driver trained on one car file fails on another (0/6 for
 the 911 drivers with the public 992; the multi-car driver: 1/6, and its one lap
@@ -1004,3 +1025,126 @@ test-design error, not a code error.) 126 tests pass.
 * `fs_v2_vary` - FS car with car variation, 2.5 h: the generic FS car is an
   estimate of a real team car, so robustness across FS-like cars is what will
   transfer to the real one.
+
+**Results.** `multi_v3_cars` (3 h): held-out public-data 992 GT3 RS **11/11**
+validation tracks (baseline 1/6), held-out public 918 11/11 at its best check
+(8/11 at the last); on the three training cars it is the first driver to
+complete **all 15 strict real-circuit laps** (table in WP27), at +4.4 / +7.3
+/ +5.8 % to the reference. `fs_v2_vary` (2.5 h): 100 % of validation tracks,
+1-2 crashes per 100 km in training. Car variation works; its price is
+about 1 % of pace on the 918, which the next work package attacks.
+
+## WP30 — A bigger driver, distilled from the current one 🕓 (built and smoke-tested; run queued)
+
+**Objective (owner, 2026-11-23).** "Train it as good and hard as you think it
+would be beneficial - a larger model is fine as long as it runs on this
+laptop." The drivers are still 4-7 % behind the reference lap.
+
+**Approach.**
+* `train.py --hidden 1024,1024,512`: the network grows from 0.2 M to 1.7 M
+  parameters (actor). Driving it costs ~1 ms per decision on the CPU - far
+  inside the 40 ms per decision in Assetto Corsa.
+* `train.py --teacher runs/multi_v3_cars/best.pt`: a bigger network cannot
+  load the smaller one's weights, and training it from zero would throw away
+  ~10 GPU-hours of learning. Instead it **copies** the trained driver first
+  ("distillation", the DAgger warm start of WP8 with the trained network as
+  teacher), then PPO continues.
+* Same car variation, held-out cars and light steering smoothing as before;
+  new realistic training circuits (WP31).
+
+**Verification (smoke tests, 4 096 cars).**
+
+| Step | Result |
+|---|---|
+| 1st version: one gradient step per decision, own input scaling, 40 steps | imitation error 0.105, **9 %** of validation tracks |
+| Buffered distillation: copy the teacher's input scaling, keep the last 48 steps of states, 4 mini-batches per step, learning rate falling to 5 %, 600 steps | imitation error **0.0012** (90x smaller); in training 157 km/h and 18 crashes/100 km - the teacher's level |
+| ...but the first PPO update | KL **450** (target 0.012), 0 % of validation tracks: the copy destroyed in one update |
+| Learning rate starts at 1e-5 after a teacher warm start + KL stop (`--kl-stop 4`) | KL **0.033** in update 1; 911 completes 4 of 5 real circuits (Imola **1:57.4**, best so far 1:58.1), 2 of 6 of the new, harder `complex` validation circuits |
+
+**Problems & resolutions.**
+1. *Rough copy.* One gradient step per decision cannot copy a 1.7 M-parameter
+   network, and a student that builds its own input scaling sees different
+   numbers than the teacher. → `warm_start(..., buffer_steps, grad_steps)`
+   keeps a replay buffer of states labelled by the teacher, several
+   mini-batches per step, cosine-falling learning rate; the teacher's input
+   scaling is copied and frozen.
+2. *First PPO update destroys the copy.* Root cause: a fresh Adam optimiser
+   moves *every* weight by the full learning rate in its first steps (its
+   step is normalised per weight). In a 1024-wide layer a thousand such
+   moves add up: the steering output shifted by ~0.9 of full lock. The
+   learning-rate rule only reacts after the damage. → (a) after a teacher
+   warm start the learning rate starts at 1e-5 and the KL rule raises it
+   x1.5 per mini-batch as far as the network tolerates; (b) new
+   `PPOConfig.kl_stop` (`--kl-stop`): an update ends early once it has
+   changed the driver by more than `kl_stop x target_kl` - the standard PPO
+   safeguard, previously missing. Test
+   `test_distillation_copies_a_trained_driver_into_a_bigger_network`.
+
+**Queued (2026-11-23, plan lanes 1 and 2).**
+* `multi_v4_big` - 1.7 M parameters, distilled from `multi_v3_cars/best.pt`
+  (800 steps), car variation, held-out public 992 and 918, light steering
+  smoothing (filter 0.03 s + penalty 0.2), KL stop 4, circuits
+  `complex+complex+gp`, validation `complex`; **8 h**.
+* `multi_v4_ctrl` - identical but the usual size, continuing from the same
+  driver; 4 h. The control separates "bigger network" from "more training
+  on better circuits".
+
+Judged strictly on the five real circuits for the three training cars, plus
+the held-out cars. *Results to be appended.*
+
+## WP31 — Realistic circuits: sections, chicanes, esses ✅ (generator); used from WP30 on
+
+**Objective (owner, 2026-11-23).** "The track generator doesn't seem all
+that complex; I need it to have chicanes and more, similar to a normal track,
+rather than a NASCAR track."
+
+**Measurement first** (`track_stats` script, 30 circuits per preset, against
+the five imported real circuits; *winding* = total turning, left and right
+counted alike, in full circles per lap):
+
+| | Lap | Corners/km | Slow (<40 m) /km | Quick left-right changes /km | Winding | On straights |
+|---|---|---|---|---|---|---|
+| Real circuits (mean of 5) | 5.4 km | 2.7 | 0.84 | 0.79 | **3.45** | 55 % |
+| `mixed` (spline/polygon) | 3.7 km | 3.7 | 0.97 | 1.37 | 1.96 | 42 % |
+| `gp` (segments, WP13) | 3.2 km | 3.3 | 2.09 | 1.14 | 2.15 | 71 % |
+| **`complex` (new)** | 4.3 km | 3.2 | 1.45 | 1.32 | **2.94** | 60 % |
+
+The owner was right: our circuits "go round once" (winding ~2: a convex
+shape turns through one circle plus wiggles), while real circuits fold back
+on themselves (Red Bull Ring's infield, Mugello, Spa: 2.6-4.7). In `mixed`
+the left-right changes are random wiggles, not designed corner complexes.
+
+**Approach.** `SegmentGenConfig(layout="sections")`, preset `complex`
+(module docstring of `mv/track/segments.py`): a lap is 5-9 *sections* -
+fast (long straight into hairpin / chicane / slow corner), technical (2-4 of:
+slow corner, medium corner, hairpin, chicane, double-apex, tightening
+corner) or flowing (esses of 3-5 alternating corners, medium corner, fast
+sweeper) - joined by straights that may carry a flat-out kink. Whole
+features are mirrored left/right at random, then more until the turning can
+add up to one circle, so chicanes and esses keep their shape. The old
+presets are byte-for-byte unchanged (recorded laps still reproduce: the
+`gp` row above is identical before and after).
+
+**Problems & resolutions.**
+1. *Chicanes became kinks.* Corner softening up to 15 m smeared a 20 m
+   chicane, and the gap between its corners was an ordinary straight that
+   the loop closure stretches to at least 15 m. → fixed gaps ("G" items) that
+   the closure does not touch; softening 2-6 m in `complex`.
+2. *First version: big triangles.* Closing the loop sometimes added
+   kilometres to two or three straights, so the drawn layout disappeared
+   into a triangle. → `max_stretch=0.35`: a layout whose closure would add
+   more than 35 % of the lap is redrawn.
+3. *First version: too many slow corners* (2.75/km vs 0.84 real) and laps
+   too short (3.3 km). → medium-speed corners added to technical and flowing
+   sections, 5-9 sections instead of 4-7, fewer fast sections. The final mix
+   is still a little more technical than an average real circuit - on
+   purpose, for training.
+
+**Verification.** Tests: `complex` added to the closed / valid / braking-zone
+test; new `test_complex_tracks_fold_back_like_real_circuits` (winding well
+above `gp`, quick left-right changes on nearly every lap). Generation ~0.5 s
+per circuit (vs ~0.1 s), acceptable: 51 new circuits every 10 updates.
+
+**Next steps.** Train on `complex+complex+gp` (WP30); validation on
+`complex`. Later: width changes along the lap, run-off/kerbs, elevation (the
+simulator is planar).

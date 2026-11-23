@@ -39,6 +39,7 @@ class PPOConfig:
     clip: float = 0.2                  # the "proximal" limit on policy change
     lr: float = 3e-4
     target_kl: float = 0.012           # learning rate is steered to keep each update about this big
+    kl_stop: float = 0.0               # stop an update early once KL > kl_stop * target_kl (0 = never; WP30)
     entropy_coef: float = 0.002        # small bonus for keeping some randomness (exploration)
     value_coef: float = 1.0
     max_grad_norm: float = 1.0
@@ -194,7 +195,10 @@ class PPO:
         mb = total // cfg.minibatches
         out = {"kl": 0.0, "value_loss": 0.0, "policy_loss": 0.0, "clip_frac": 0.0}
         updates = 0
+        stop = False
         for _epoch in range(cfg.epochs):
+            if stop:
+                break
             perm = torch.randperm(total, device=obs.device)
             for i in range(cfg.minibatches):
                 j = perm[i * mb:(i + 1) * mb]
@@ -222,15 +226,22 @@ class PPO:
                 # steer the learning rate so each update changes the policy by about target_kl
                 if not train_policy:
                     continue
+                # emergency brake: this update already changed the driver far more than intended
+                # (e.g. the first steps of a fresh optimiser on a wide network, log WP30)
+                if cfg.kl_stop and kl > cfg.kl_stop * cfg.target_kl:
+                    stop = True
                 if kl > 2.0 * cfg.target_kl:
                     self.lr = max(self.lr / 1.5, 1e-5)
                 elif kl < 0.5 * cfg.target_kl:
                     self.lr = min(self.lr * 1.5, 1e-3)
                 for g in self.opt.param_groups:
                     g["lr"] = self.lr
+                if stop:
+                    break
         for k in out:
             out[k] /= max(updates, 1)
         out["lr"] = self.lr
+        out["stopped_early"] = float(stop)
         out["std"] = float(net.log_std.detach().exp().mean())
         return out
 

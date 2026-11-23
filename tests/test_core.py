@@ -297,6 +297,44 @@ def test_ppo_runs_and_checkpoints(car, tmp_path):
     assert torch.allclose(before, other.net.act(ppo.obs, deterministic=True)[0], atol=1e-5)
 
 
+
+def test_distillation_copies_a_trained_driver_into_a_bigger_network(car):
+    """WP30: a wider network copies an existing driver (same input scaling, buffered
+    distillation) far more closely than one gradient step per decision does, and the
+    KL stop ends an update that would change the copied driver too much."""
+    from mv.rl.pretrain import warm_start
+    tracks = TrackBatch(random_tracks(4, seed=2, cfg="mixed"), ds=1.0)
+    env = RacingEnv(car, tracks, 64, EnvConfig(), device="cpu", seed=1)
+    teacher = PPO(env, PPOConfig(rollout_steps=8, epochs=1, minibatches=2, hidden=(32, 32)))
+    warm_start(teacher, env.scripted_teacher(), steps=30, critic_updates=1, printer=lambda *_: None)
+    tnet = teacher.net
+
+    class T:
+        obs_norm = tnet.obs_norm
+
+        def act(self, obs, deterministic=True):
+            return tnet.act(obs, deterministic=True)
+
+    def copy_error(**kw):
+        torch.manual_seed(0)
+        student = PPO(env, PPOConfig(rollout_steps=8, epochs=4, minibatches=4, hidden=(128, 128), kl_stop=1.5))
+        warm_start(student, T(), steps=40, noise=0.05, critic_updates=0, printer=lambda *_: None, **kw)
+        obs = env.observe()
+        err = float((student.net.act(obs, True)[0] - tnet.act(obs, True)[0]).pow(2).mean())
+        return err, student
+
+    plain, _ = copy_error()
+    distilled, student = copy_error(buffer_steps=20, grad_steps=8, batch=512, lr=1e-3)
+    assert distilled < 0.7 * plain                 # ~2x here; 90x at full scale (log WP30)
+    assert torch.equal(student.net.obs_norm.mean, tnet.obs_norm.mean)
+    # an absurd learning rate must trip the KL stop instead of running all 16 mini-batches
+    student.lr = 1.0
+    for g in student.opt.param_groups:
+        g["lr"] = 1.0
+    student.collect()
+    assert student.update().get("stopped_early") == 1.0
+
+
 def test_evaluate_gives_up_on_a_driver_that_does_not_move(car):
     env = make_env(car, circle_track())
 
@@ -330,7 +368,7 @@ def test_one_driver_can_train_on_several_cars():
     assert torch.isfinite(env.observe()).all()
 
 
-@pytest.mark.parametrize("preset", ["gp", "fs_segments"])
+@pytest.mark.parametrize("preset", ["gp", "fs_segments", "complex"])
 def test_segment_tracks_are_closed_valid_and_have_braking_zones(preset):
     from mv.track.segments import SEGMENT_PRESETS, segment_track
     cfg = SEGMENT_PRESETS[preset]
@@ -350,6 +388,30 @@ def test_segment_tracks_are_closed_valid_and_have_braking_zones(preset):
             best = max(best, run)
         long_straights += min(best, t.n) * t.ds >= cfg.long_straight_m[0] * 0.8
     assert long_straights >= 3, "most circuits should contain a long straight"
+
+
+
+def test_complex_tracks_fold_back_like_real_circuits():
+    """WP31: the section layout turns more in total (left AND right) than the
+    feature layout - real circuits fold back on themselves (winding about 3.5
+    full circles per lap, against about 2 for a convex "go round once" shape) -
+    and every lap has quick left-right changes (chicanes or esses)."""
+    from mv.track.segments import segment_track
+
+    def winding(t):
+        return float(np.abs(t.kappa).sum() * t.ds / (2 * np.pi))
+
+    def quick_switches(t):                      # sign change of clear curvature within 60 m
+        k = np.where(np.abs(t.kappa) > 1 / 150.0, np.sign(t.kappa), 0.0)
+        idx = np.flatnonzero(k)
+        sg = k[idx]
+        gaps = np.diff(idx) * t.ds
+        return int(((sg[1:] != sg[:-1]) & (gaps < 60.0)).sum())
+
+    cx = [segment_track(100 + i, "complex") for i in range(6)]
+    gp = [segment_track(100 + i, "gp") for i in range(6)]
+    assert np.mean([winding(t) for t in cx]) > np.mean([winding(t) for t in gp]) + 0.4
+    assert sum(quick_switches(t) > 0 for t in cx) >= 5
 
 
 def test_preset_mix_draws_from_both_generators():
