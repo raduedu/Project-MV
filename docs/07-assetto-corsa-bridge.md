@@ -384,3 +384,48 @@ fast — so the simulator can be tuned to the game (engineering log WP19):
 In `--dry-run` nothing is sent to the car: you drive, the script records (and
 prints what the rule-based driver *would* do, which doubles as the dry-run
 check).
+
+## Viewing laps in the game (MV Viewer, engineering log WP32)
+
+A recorded lap can be played inside Assetto Corsa - real car model, real
+circuit, any camera - with the ideal lap (or any other lap) as a ghost. For
+presentations and for watching how the driver takes a corner.
+
+**What you see.** The lap as driven in *our* simulator, replayed on the
+game's visuals: every frame the player's car is placed where the recorded car
+was (`physics.setCarPosition`, which also puts it on the track surface), with
+the recorded speed, steering (wheel and steering wheel turn), pedals (brake
+lights) and gear. It is not AC's physics driving; for that, drive live with
+`scripts/ac_drive.py`.
+
+**The ghost** is the physics reference lap of the same car and circuit (or the
+lap chosen as ghost in the web viewer, e.g. another driver):
+* if the session has a second car (one AI opponent), that car becomes the
+  ghost - a real car model, collisions and its own driving switched off;
+* otherwise a translucent car-sized footprint with an arrow and the label
+  "GHOST +0.42 s";
+* its racing line for the next ~450 m is drawn on the track, red = slow,
+  green = fast; the time gap is shown in the app window.
+
+**How to use it.**
+1. Once (and after updates): close AC, run
+   `powershell -ExecutionPolicy Bypass -File "D:\Visual Studio\Project MV\mv\ac\plugin\install_plugin.ps1"`
+   (installs MV Bridge and MV Viewer).
+2. Content Manager -> Drive -> **Practice**, the lap's circuit and car
+   (add one AI car for a ghost car).
+3. Control panel -> Laps -> Watch a lap -> **View in Assetto Corsa**
+   (or `scripts\ac_view.py --best ks_porsche_911_gt3_rs imola`). It starts by
+   itself; the in-game window "MV Viewer" has Play/Pause/Restart/Stop, speed,
+   seek and the ghost options.
+4. Film with the Windows Game Bar (Win+Alt+R) or OBS; AC's replay also records
+   the playback, so its TV cameras can be used afterwards.
+
+Only laps on circuits imported from the game can be shown (the generated
+circuits do not exist in AC). Physics access is needed (`physics.allowed`;
+offline Practice).
+
+**Not verified in-game yet** (the tooling never starts the game): smoothness
+of per-frame placement (if the car shakes, the alternative is to set only the
+velocity and correct the position when it drifts), whether an AI car accepts
+being placed every frame, and the sign of `setCarPosition`'s direction (checked
+and flipped once automatically, as in MV Bridge).

@@ -291,6 +291,10 @@
         if (opts.csvHref) { const a = document.createElement("a"); a.className = "btn"; a.href = opts.csvHref(A); a.textContent = "Download this lap's data (CSV)"; el.actions.appendChild(a); }
         if (opts.onReproduce && A.meta.checkpoint) { const b = document.createElement("button"); b.textContent = "Reproduce: drive this lap again from the saved driver";
           b.onclick = () => opts.onReproduce(A); el.actions.appendChild(b); }
+        if (opts.onViewInAC && (!opts.canViewInAC || opts.canViewInAC(A))) { const b = document.createElement("button");
+          b.textContent = "View in Assetto Corsa" + (B ? " (with this ghost)" : " (with the ideal-lap ghost)");
+          b.title = "Plays this lap in the running game (MV Viewer app, offline Practice on this circuit with this car)";
+          b.onclick = () => opts.onViewInAC(A, B); el.actions.appendChild(b); }
         sectors(); legendKey(); drawCharts(); frame();
       },
       play: setPlay,

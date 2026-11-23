@@ -497,12 +497,16 @@ function getViewer() {
   if (!viewer) viewer = MVReplay.create($("#replay"), {
     csvHref: l => "/api/lap.csv?key=" + encodeURIComponent(l.meta.key),
     onReproduce: l => act("/api/reproduce", {key: l.meta.key}).then(() => { show("tools"); }),
+    // only laps on circuits imported from Assetto Corsa exist in the game
+    canViewInAC: l => ((typeof options !== "undefined" && options && options.tracks) || []).includes(l.meta.track),
+    onViewInAC: (l, g) => act("/api/ac_view", {key: l.meta.key, ghost: g ? g.meta.key : "auto"}),
   });
   return viewer;
 }
 const fetchLap = async key => { const l = await api("/api/lap?key=" + encodeURIComponent(key)); l.meta.key = key; return l; };
 async function watchLap(key, ghostKey) {
   show("laps");
+  if (!options) { try { await loadOptions(); } catch (e) {} }   // circuit list: decides the "View in Assetto Corsa" button
   const l = laps.find(x => x.key === key);
   if (l) { $("#l_track").value = l.track; $("#l_car").value = l.car; }
   const A = await fetchLap(key);

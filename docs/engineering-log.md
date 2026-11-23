@@ -1148,3 +1148,43 @@ per circuit (vs ~0.1 s), acceptable: 51 new circuits every 10 updates.
 **Next steps.** Train on `complex+complex+gp` (WP30); validation on
 `complex`. Later: width changes along the lap, run-off/kerbs, elevation (the
 simulator is planar).
+
+## WP32 — Laps in Assetto Corsa: "View in Assetto Corsa" with ghost 🕓 (built and tested offline; first in-game test by the owner)
+
+**Objective (owner, 2026-11-23).** Film the fastest laps in Assetto Corsa
+with the ghost in front, ideally a "View in Assetto Corsa" button, to present
+the project to people who do not know the concepts and to observe the
+driver's behaviour better.
+
+**Approach.** Reuse the bridge's mechanism (chapter 07): Python writes the
+lap into shared memory (`mv/ac/viewer_link.py`, `Local\mv_viewer_v1`, 672 kB:
+up to 12 000 samples = 8 min at 25 Hz of car t/x/y/heading/speed/steering/
+pedals/gear and ghost t/x/y/heading/speed); a second CSP Lua app, **MV
+Viewer**, reads it and replays the lap on the player's car
+(`physics.setCarPosition` + velocity + overridden controls + gear) and shows
+the ghost as a second car (`physics.setAICarPosition`, collisions and AI
+input off) or as a drawn footprint, plus the ghost's racing line coloured by
+speed and the time gap. Entry points: web viewer button (only shown for laps
+on imported circuits; the web server keeps the mapping open), and
+`scripts/ac_view.py` (waits until the game confirms the lap). Every CSP call
+was checked against the SDK shipped with the installed CSP 0.2.11.
+
+**Verification.** `tests/test_ac_viewer.py` (5 tests): Lua layouts equal the
+Python structs byte for byte, magic/version/commands match, map->AC frame and
+steering sign in the Lua code, round trip of a lap through shared memory,
+lap preparation (resampling, heading from the path for old laps, newest
+matching ghost). End to end without the game: `ac_view.py --best
+ks_porsche_911_gt3_rs imola` sends the 1:56.668 lap with the 1:52.035 ghost
+and reports that no game picked it up; the web button does the same; a lap
+on a generated circuit is refused with an explanation.
+
+**Problems & resolutions.** Shared memory on Windows disappears when the last
+handle closes, so a command-line tool that exits at once would lose the lap
+if the game is not running yet. -> the web server keeps one link open for its
+lifetime; `ac_view.py` waits until the game reports the lap id as loaded
+(from then on the game holds its own handle).
+
+**Next steps.** Owner's first in-game test (chapter 07, "Viewing laps in the
+game"); then, if per-frame placement looks jerky, a velocity-driven mode with
+position correction. Later: export generated circuits as AC tracks so every
+lap can be shown.

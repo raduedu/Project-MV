@@ -43,7 +43,7 @@ TASKS = ROOT / "runs" / "ui_tasks"
 PID_FILE = ROOT / "runs" / "webui.pid"
 PY = sys.executable
 NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,60}$")
-PRESETS = ["mixed+gp", "mixed", "gp", "circuit", "fs+fs_segments", "fs_segments", "fs"]
+PRESETS = ["complex+complex+gp", "complex", "mixed+gp", "mixed", "gp", "circuit", "fs+fs_segments", "fs_segments", "fs"]
 
 _tasks: dict[str, dict] = {}            # task id -> {"proc": Popen, ...}  (this server's tasks)
 _lock = threading.Lock()
@@ -59,6 +59,18 @@ def vehicles() -> list[dict]:
         for p in sorted((ROOT / "vehicles" / sub).glob("*.yaml")):
             out.append({"name": p.stem, "where": sub})
     return out
+
+
+_viewer = None
+
+
+def _viewer_link():
+    """The shared-memory link to the in-game MV Viewer app, opened once per server (mv/ac/viewer_link.py)."""
+    global _viewer
+    if _viewer is None:
+        from mv.ac.viewer_link import ViewerLink
+        _viewer = ViewerLink()
+    return _viewer
 
 
 def local_tracks() -> list[str]:
@@ -286,6 +298,26 @@ def act(path: str, body: dict) -> dict:
             raise ValueError("unknown track")
         tid = start_task("import", f"Import track {track}", ["scripts/import_ac_track.py", track])
         return {"ok": True, "task": tid, "msg": f"Importing {track} ..."}
+    if path == "/api/ac_view":
+        # Show a lap in the running game (MV Viewer app). The mapping stays open for the server's
+        # lifetime, so the game can pick the lap up whenever a session starts (log WP32).
+        from mv.ac.viewer_link import viewer_payload
+        key = body.get("key", "")
+        ghost = body.get("ghost", "auto") or None
+        payload = viewer_payload(key, ghost)
+        link = _viewer_link()
+        link.load(payload, speed=float(body.get("speed", 1.0)), loop=True)
+        st = link.state()
+        where = ("the game has the viewer running - it starts now" if st and st["frame"] else
+                 "start Assetto Corsa (offline Practice, this circuit and car, MV Viewer app installed); "
+                 "it starts when the session loads")
+        return {"ok": True, "msg": f"Sent to Assetto Corsa: {payload['label']}. {where}.", "state": st}
+    if path == "/api/ac_view_cmd":
+        from mv.ac.viewer_link import Command
+        cmd = {"play": Command.PLAY, "pause": Command.PAUSE, "restart": Command.RESTART,
+               "stop": Command.STOP}[body.get("cmd", "")]
+        _viewer_link().command(cmd, speed=body.get("speed"))
+        return {"ok": True, "msg": f"Assetto Corsa viewer: {body.get('cmd')}", "state": _viewer_link().state()}
     if path == "/api/reproduce":
         from mv.laps import load_lap
         key = body.get("key", "")

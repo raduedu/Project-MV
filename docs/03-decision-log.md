@@ -37,6 +37,7 @@ supersedes it — do not edit history.*
 | D-029 | Bigger network (1.7 M) distilled from the best driver instead of trained from zero | active, under test |
 | D-030 | Section-based realistic circuits (`complex`) as the main training preset | active |
 | D-031 | No imitation of a named real driver; public telemetry only as a benchmark | active |
+| D-032 | Laps are shown in AC by replaying our recorded lap on the game's car (CSP app), not by writing AC replay files | active, first in-game test pending |
 
 ---
 
@@ -403,3 +404,16 @@ supersedes it — do not edit history.*
   and held-out cars (D-028) measure and train. Reinforcement learning
   against the physics reference lap already aims at the limit, which is
   what any great driver does.
+
+### D-032 — Showing laps in Assetto Corsa
+
+* **Options.** (a) Write AC's own replay files (`.acreplay`). (b) A CSP Lua
+  app that places the car on the recorded lap every frame. (c) Only drive
+  live in AC with the trained driver.
+* **Decision.** (b), with (c) kept for watching the driver on AC's physics.
+* **Why.** (a) is an undocumented binary format and the files live in the
+  user's documents - fragile and unverifiable without the game. (b) uses only
+  documented CSP calls and the bridge's proven shared-memory link, shows
+  exactly the lap we measured (lap times in the panel stay true), and adds
+  what AC's replay cannot: the ideal-lap ghost and its racing line. (c) shows
+  AC physics, which is a different (and valuable) question: sim-to-game gap.
