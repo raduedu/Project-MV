@@ -1329,3 +1329,50 @@ is pessimistic (real tyres steer with the car instead of fighting every slide).
 
 **Next steps.** Owner: reinstall the apps, try Spa again; the window shows "following: x m, y
 deg" and a stiffness slider (0.3-3). If the worker does not start, the window says "fallback".
+
+## WP35 — Owner's in-game test: gearbox damage, ghost fixes, steering zig-zag, shift points 🕓 (viewer fixed offline; zig-zag run queued)
+
+**Owner's report (2026-11-23).** "It works well" (WP34 follower: smooth, dashboard and gears
+show), but: the ghost is not see-through and floats; a pulsing red "driveshaft" indicator;
+the steering looks chaotic; and a question whether gears are changed too late (redline vs
+peak power).
+
+**Red drivetrain indicator - root cause.** Kunos' damage display (gearbox). The owner's game
+settings: damage 100 %, auto-clutch off, auto-blip off, H-shifter active. The viewer forced
+gears in with the clutch released, which the game counts as mis-shifts -> gearbox damage, gears
+popping out ("neutral in corners"). **It does not concern training**: our simulator has no
+drivetrain damage and its lap times are unaffected; it only affected the in-game replay.
+Fix: shifts like the car's PDK - one paddle pull per gear step, clutch dipped during the change,
+throttle blip on downshifts; CSP's gear request after 0.25 s and `engageGear` after 0.6 s only
+as fallbacks. (A gearbox already damaged stays damaged until the session restarts.)
+
+**Ghost.** (1) Transparency was set on the model's top node; it has to be set on the meshes
+(`findMeshes('?')`, `findSkinnedMeshes('?')`): transparent pass, additive blending, dimmed
+diffuse/ambient, blue emissive glow. (2) It floated by ~0.45 m: it was placed at the physics
+reference height (near the centre of gravity; the owner's Car Physics app shows CGH 0.455)
+while a car model's origin is at road level. Now the real car's model origin relative to the
+road (and to the physics point) is measured from `carRoot:0` while it stands still and the
+ghost is placed the same way.
+
+**Shift points - checked, already right.** The simulator does not shift at the redline by rule:
+it shifts up where the next gear gives at least as much force at the wheels (computed from the
+car's own torque curve), never later than 99 % of the limiter. 911 GT3 RS (peak power 325 kW at
+8 250 rpm, limiter 9 000): 1-5 shift at 8 910 rpm (after a shift at 8 250 the engine would land at
+~5 200 rpm and pull less - the gear steps are large), 5-6 at 8 883, 6-7 at 8 807 (closer
+steps -> earlier). 918: 9 058 rpm. A car whose power falls after its peak with close ratios
+(the owner's example: peak at 6 000, redline 6 600) gets an earlier shift automatically. The
+driver network does not choose gears.
+
+**Steering zig-zag - measured.** Direction reversals per second on the Spa laps: ideal lap
+0.5; `multi_v1` 21.6; `multi_v2_steer_light` 13.7; `multi_v2_steer_penalty` 16.3;
+`multi_v3_cars` 21.4 - i.e. the steering flips direction on almost every other decision, by
+~1.6-2.8 % of lock. Neither existing setting targets that: a 0.03 s filter is shorter than one
+decision (0.04 s), and the change penalty also taxes genuine fast steering. New
+`EnvConfig.steer_zigzag_penalty` / `train.py --steer-zigzag`: penalty
+`max(0, -change_now x change_before)` - zero for steering moving one way however fast, positive
+only for direction flips (test `test_zigzag_penalty_hits_only_direction_flips`). Lap files now
+record `steer_reversals` per second.
+
+**Queued.** `multi_v5_zigzag` (lane 2, after `multi_v4_ctrl`): continues from it with
+`--steer-zigzag 5`, everything else equal, 3 h. Judged by strict lap times (must not be slower)
+and reversals per second.

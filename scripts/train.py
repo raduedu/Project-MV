@@ -165,6 +165,9 @@ def main() -> None:
                     help="steering smoothing: time constant (s) of a low-pass filter on the steering command, e.g. 0.05")
     ap.add_argument("--steer-penalty", type=float, default=None,
                     help="penalty on steering jerks (change of the steering command per step, squared), e.g. 0.5")
+    ap.add_argument("--steer-zigzag", type=float, default=None,
+                    help="penalty on steering zig-zag only (direction flips from one decision to the next), e.g. 5; "
+                         "fast steering in one direction stays free (engineering log WP35)")
     ap.add_argument("--min-noise", type=float, default=None,
                     help="floor for the exploration noise (default 0.03)")
     ap.add_argument("--refresh-every", type=int, default=10, help="replace circuits every N updates")
@@ -227,6 +230,8 @@ def main() -> None:
         env_cfg.steer_filter_s = args.steer_filter
     if args.steer_penalty is not None:
         env_cfg.steer_penalty = args.steer_penalty
+    if args.steer_zigzag is not None:
+        env_cfg.steer_zigzag_penalty = args.steer_zigzag
     if args.limit_seeking:
         env_cfg.recover_on_crash = True
         env_cfg.lap_memory = True

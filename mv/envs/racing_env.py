@@ -86,6 +86,11 @@ class EnvConfig:
     # A jittery wheel scrubs the tyres and costs speed.  Two independent knobs:
     steer_filter_s: float = 0.0                  # time constant of a low-pass filter on the steering command, s (0 = off)
     steer_penalty: float = 0.0                   # extra penalty per (change of the steering command per step)^2
+    # Zig-zag penalty (WP35): max(0, -(change now) x (change one step before)). Zero while the steering keeps
+    # moving one way - a fast, decisive steering movement costs nothing - and positive only when the
+    # direction flips from one decision to the next: the 25 Hz sawing measured on the recorded laps
+    # (13-22 direction reversals per second vs 0.5 for the ideal lap).
+    steer_zigzag_penalty: float = 0.0
     # --- termination ---
     off_track_margin_m: float = 1.0              # car centre this far beyond the edge = crashed
     max_heading_error_rad: float = 1.8
@@ -178,6 +183,7 @@ class RacingEnv:
         self.hist_idx = torch.tensor([self.hist_len - 1 - cfg.history_every * j for j in range(1, cfg.history_steps + 1)],
                                      device=dev, dtype=torch.long)
         self.prev_action = torch.zeros(num_envs, 2, device=dev)
+        self.prev_steer_delta = torch.zeros(num_envs, device=dev)   # last change of the steering command
         self.steer_cmd = torch.zeros(num_envs, device=dev)          # state of the steering filter
         self.lap_count, self.lap_start_t = z(torch.long), z()
         self.last_lap_time = torch.full((num_envs,), float("nan"), device=dev)
@@ -285,6 +291,7 @@ class RacingEnv:
         full_range = torch.full((k,), float(cfg.lidar_range_m), device=dev)
         self.lidar_range[ids] = torch.where(blind, self.horizon[ids], full_range) if cfg.blind_lidar else full_range
         self.prev_action[ids] = 0.0
+        self.prev_steer_delta[ids] = 0.0
         self.steer_cmd[ids] = 0.0
         self.lap_count[ids], self.lap_start_t[ids] = 0, 0.0
         self.ep_return[ids], self.ep_len[ids] = 0.0, 0.0
@@ -321,6 +328,7 @@ class RacingEnv:
         self.along[ids], self.lat[ids], self.head_err[ids] = 0.0, 0.0, 0.0
         self.stall_t[ids] = 0.0
         self.prev_action[ids] = 0.0
+        self.prev_steer_delta[ids] = 0.0
         self.steer_cmd[ids] = 0.0
         self.reset_history(ids)
 
@@ -546,10 +554,13 @@ class RacingEnv:
         over = (torch.maximum(self.lat - self.w_left, -self.lat - self.w_right) + self.half_width)  # body over the edge (m)
         over_pos = over.clamp(min=0.0)
         jerk = ((action - self.prev_action) ** 2).sum(1)
-        steer_jerk = (action[:, 0] - self.prev_action[:, 0]) ** 2
+        steer_delta = action[:, 0] - self.prev_action[:, 0]
+        steer_jerk = steer_delta ** 2
+        zigzag = (-steer_delta * self.prev_steer_delta).clamp(min=0.0)
         reward = (cfg.progress_scale * progress
                   - cfg.edge_penalty * over_pos.clamp(max=3.0) - cfg.edge_penalty_const * (over > 0).float()
-                  - cfg.smooth_penalty * jerk - cfg.steer_penalty * steer_jerk)
+                  - cfg.smooth_penalty * jerk - cfg.steer_penalty * steer_jerk
+                  - cfg.steer_zigzag_penalty * zigzag)
 
         # ---- end of episode? -------------------------------------------------------
         speed = torch.sqrt(sim.vx ** 2 + sim.vy ** 2)
@@ -573,6 +584,7 @@ class RacingEnv:
         reward = torch.where(crash | bad, reward - cfg.crash_penalty, reward)
         reward = torch.nan_to_num(reward, nan=-cfg.crash_penalty, posinf=0.0, neginf=-cfg.crash_penalty)
         self.prev_action = action
+        self.prev_steer_delta = steer_delta
         self.ep_return += reward
         self.push_history()
 

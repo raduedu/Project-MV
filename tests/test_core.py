@@ -520,3 +520,29 @@ def test_car_variation_changes_the_car_and_tells_the_driver(car):
     # evaluation always drives the true car file
     ev = RacingEnv(car, tracks, 8, eval_config(replace(EnvConfig(), vary_car=True)), device="cpu")
     assert torch.allclose(ev.observe()[:, lay], ev.car_desc[None].expand(8, -1))
+
+
+def test_zigzag_penalty_hits_only_direction_flips(car):
+    """WP35: steering that keeps moving one way (even fast) costs nothing; flipping direction every
+    decision (the 25 Hz sawing seen on recorded laps) costs exactly c x (-change_now x change_before)."""
+    from dataclasses import replace
+    from mv.laps import steer_reversals
+
+    def rewards(penalty, steers):
+        tracks = TrackBatch(random_tracks(1, seed=3, cfg="mixed"), ds=1.0)
+        env = RacingEnv(car, tracks, 1, replace(quiet_config(), steer_zigzag_penalty=penalty), device="cpu", seed=5)
+        out = []
+        for sv in steers:
+            _, r, term, trunc, _ = env.step(torch.tensor([[sv, 0.3]]))
+            assert not (term | trunc).any()
+            out.append(float(r[0]))
+        return np.array(out)
+
+    ramp = [0.0, 0.05, 0.15, 0.30, 0.40, 0.42]                  # fast but one way
+    saw = [0.0, 0.04, 0.0, 0.04, 0.0, 0.04]                     # direction flips every step
+    assert np.allclose(rewards(5.0, ramp), rewards(0.0, ramp))
+    diff = rewards(0.0, saw) - rewards(5.0, saw)
+    d = np.diff([0.0] + saw)                                    # changes of the command (first from 0)
+    expect = 5.0 * np.maximum(0.0, -d[1:] * d[:-1])
+    assert np.allclose(diff[1:], expect, atol=1e-6) and diff[1:].sum() > 0
+    assert steer_reversals([0, 1, 2, 1, 2, 1], 1.0) == 3.0 and steer_reversals([0, 1, 2, 3], 1.0) == 0.0

@@ -62,6 +62,15 @@ def _track_geometry(track: Track, step_m: float = 3.0) -> dict:
             "direction": track.turning_direction()}
 
 
+def steer_reversals(steer, duration_s: float) -> float | None:
+    """Direction changes of the steering per second (sawing at the wheel shows up here)."""
+    d = np.diff(np.asarray(steer, float))
+    d = d[np.abs(d) > 1e-4]                       # ignore steps where the wheel did not move
+    if len(d) < 2 or duration_s <= 0:
+        return None
+    return round(float(np.sum(np.sign(d[1:]) != np.sign(d[:-1]))) / float(duration_s), 2)
+
+
 def make_lap(car: str, track: Track, driver: str, kind: str, lap_time: float, samples: dict[str, np.ndarray],
              source: str, checkpoint: str = "", notes: str = "", car_file: str = "", track_recipe: dict | None = None) -> dict:
     """Build a lap dictionary from sample arrays (times from 0, distance from the start line)."""
@@ -79,7 +88,9 @@ def make_lap(car: str, track: Track, driver: str, kind: str, lap_time: float, sa
             "avg_kmh": round(track.length / float(lap_time) * 3.6, 1), "samples": len(out.get("t", [])),
             # how busy the steering is: total wheel travel per second, in fractions of full lock (jitter shows up here)
             "steer_activity": round(float(np.abs(np.diff(np.asarray(samples["steer"], float))).sum()) / float(lap_time), 3)
-            if "steer" in samples and len(samples["steer"]) > 1 else None}
+            if "steer" in samples and len(samples["steer"]) > 1 else None,
+            # zig-zag: how often per second the steering changes direction (ideal lap ~0.5, WP35)
+            "steer_reversals": steer_reversals(samples["steer"], lap_time) if "steer" in samples else None}
     return {"meta": meta, "track": _track_geometry(track), "samples": out}
 
 

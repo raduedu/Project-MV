@@ -129,7 +129,7 @@ local workerKey = math.floor(os.preciseClock() * 1000) % 2000000000 + 1
 local workerStarted, workerFailed = false, nil
 local lastSteps, lastStepsChange = -1, 0
 -- gears
-local wantGear, gearSince, gearRequested = nil, 0, false
+local shift = nil            -- {target, t0, lastPulse} while a gear change is in progress (applyInputs)
 -- ghost model
 local ghostNode, ghostModel, ghostTried = nil, nil, false
 
@@ -205,10 +205,23 @@ local function groundY(x, z, guessY, normalOut)
   return y
 end
 
+-- Where the car's 3D model sits: its origin relative to the road and to the physics reference point
+-- (car.position is near the centre of gravity, 0.455 m up on the 911; the model's origin is usually
+-- at road level). WP34's ghost floated because it was placed at the physics height (WP35).
+local modelHeight, modelForward = 0.0, 0.0
+
 local function measureRideHeight()
   if (car.speedKmh or 99) < 2 then
-    local h = car.position.y - groundY(car.position.x, car.position.z, car.position.y)
+    local ground = groundY(car.position.x, car.position.z, car.position.y)
+    local h = car.position.y - ground
     if h > 0.05 and h < 1.5 then rideHeight = h end
+    local ok, m = pcall(function() return ac.findNodes('carRoot:0'):getWorldTransformationRaw() end)
+    if ok and m then
+      local mh = m.position.y - ground
+      if mh > -0.5 and mh < 1.5 then modelHeight = mh end
+      local mf = (m.position - car.position):dot(car.look)
+      if math.abs(mf) < 2 then modelForward = mf end
+    end
   end
 end
 
@@ -231,13 +244,16 @@ local function releaseCar()
     physics.setCarAutoShifter(0, savedAutoShift)
     savedAutoShift = nil
   end
-  wantGear, gearRequested = nil, false
+  shift = nil
   follow.active = 0
 end
 
--- Recorded steering and pedals every frame. Gears: shift only when the lap shifts (requesting the
--- gear every frame kept restarting the shift - the "neutral in corners" of WP33); force it only if
--- the gearbox has not taken it after 0.4 s.
+-- Recorded steering and pedals every frame. Gears are changed the way the car's PDK does it
+-- (WP35): one paddle pull per gear step, the clutch dipped while the gear changes and a throttle
+-- blip on downshifts. Before, gears were forced in with the clutch released; with the owner's
+-- settings (damage 100 %, no auto-clutch, H-shifter) the game counted every shift as a mis-shift
+-- and damaged the gearbox (the flashing red drivetrain, gears popping out = "neutral in corners").
+-- CSP's gear request and, last of all, engageGear are fallbacks if the paddles are ignored.
 local function applyInputs(s, gear)
   takeGearbox()
   controls = controls or ac.overrideCarControls(0)
@@ -247,21 +263,20 @@ local function applyInputs(s, gear)
   controls.brake = math.max(0, math.min(1, s.brk))
   controls.clutch = 1
   controls.requestedGearIndex = 0
+  controls.gearUp, controls.gearDown = false, false
   local g = math.floor(gear + 0.5)
-  if g < 1 then return end
+  if g < 1 or car.gear == g then shift = nil return end
   local now = os.preciseClock()
-  if g ~= wantGear then
-    wantGear, gearSince, gearRequested = g, now, false
+  if not shift or shift.target ~= g then shift = { target = g, t0 = now, lastPulse = -1 } end
+  local since = now - shift.t0
+  controls.clutch = 0                                      -- clutch in while the gear changes
+  if car.gear > g then controls.gas = math.max(controls.gas, 0.45) end   -- blip: match revs going down
+  if now - shift.lastPulse > 0.12 then                     -- one paddle pull per gear step
+    if car.gear < g then controls.gearUp = true else controls.gearDown = true end
+    shift.lastPulse = now
   end
-  if car.gear ~= g then
-    if not gearRequested then
-      controls.requestedGearIndex = g                      -- one request, like a paddle pull
-      gearRequested = true
-    elseif now - gearSince > 0.4 then
-      physics.engageGear(0, g)
-      gearSince = now
-    end
-  end
+  if since > 0.25 then controls.requestedGearIndex = g end -- paddles ignored (H-shifter set up)?
+  if since > 0.6 then physics.engageGear(0, g); shift.t0 = now end   -- last resort, clutch is in
 end
 
 -- Put the car on the recorded pose at time T (road height, verified direction) - start/seek/loop only
@@ -326,12 +341,20 @@ local function ensureGhostModel()
     ghostNode = ac.findNodes('carsRoot:yes'):createBoundingSphereNode('mvViewerGhost', 6)
     ghostModel = ghostNode and ghostNode:loadKN5(lap.model)
     if ghostModel then
-      ghostModel:setTransparent(true)
-      ghostModel:setBlendMode(render.BlendMode.BlendAdd)        -- additive: see-through, glowing
-      ghostModel:setMaterialProperty('ksEmissive', rgb(0.06, 0.22, 0.55))
       ghostModel:setShadows(false)
       ghostModel:excludeFromCubemap(true)
       ghostModel:excludeFromSecondary(true)
+      -- see-through must be set on the MESHES (WP34 set it on the node: no effect, the ghost was solid)
+      for _, meshes in ipairs({ ghostModel:findMeshes('?'), ghostModel:findSkinnedMeshes('?') }) do
+        if meshes and #meshes > 0 then
+          meshes:setTransparent(true)
+          meshes:setBlendMode(render.BlendMode.BlendAdd)        -- additive: see-through, glowing
+          pcall(function() meshes:setMaterialProperty('ksDiffuse', 0.18) end)   -- faint body ...
+          pcall(function() meshes:setMaterialProperty('ksAmbient', 0.12) end)
+          pcall(function() meshes:setMaterialProperty('ksEmissive', rgb(0.05, 0.2, 0.5)) end)  -- ... blue glow
+          meshes:setShadows(false)
+        end
+      end
     end
   end)
   if not ok then ac.log('mv_viewer ghost model: ' .. tostring(err)); ghostModel = nil end
@@ -346,10 +369,11 @@ local function updateGhost()
   if not show then return end
   local gs = sample(lap.ghost, playT, { 'x', 'y', 'yaw' })
   ghostGround = groundY(gs.x, -gs.y, ghostGround or lastGround or car.position.y, ghostNormal)
-  ghostNode:setPosition(vec3(gs.x, ghostGround + rideHeight, -gs.y))
   local look = worldDir(gs.yaw)
   local up = ghostNormal:length() > 0.5 and ghostNormal or vec3(0, 1, 0)
   look = (look - up * look:dot(up)):normalize()            -- follow the road's slope (Eau Rouge)
+  -- the model's origin where the real car's model origin would be: on the road, not at the CG
+  ghostNode:setPosition(vec3(gs.x, ghostGround, -gs.y) + up * modelHeight + look * modelForward)
   ghostNode:setOrientation(look, up)
 end
 

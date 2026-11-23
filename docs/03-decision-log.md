@@ -40,6 +40,7 @@ supersedes it — do not edit history.*
 | D-032 | Laps are shown in AC by replaying our recorded lap on the game's car (CSP app), not by writing AC replay files | active, first in-game test pending |
 | D-033 | The control panel may start Assetto Corsa for the owner (race.ini rewritten with backup), never on its own | active |
 | D-034 | AC viewer: the real car is steered by forces at the physics rate (no per-frame teleports); ghost = see-through copy of the car model | active, in-game check pending |
+| D-035 | Steering smoothness via a zig-zag penalty (direction flips only), not stronger filtering | under test |
 
 ---
 
@@ -444,3 +445,14 @@ supersedes it — do not edit history.*
 * **Why.** Only (c) keeps everything the owner wants to observe genuine (suspension, gear
   changes, dashboard, sound) while following the recorded lap closely (offline simulation in
   WP34). The ghost needs no physics at all, so a visual copy is the smoothest and cannot collide.
+
+### D-035 — Penalise steering zig-zag, not steering speed
+
+* **Context.** The owner sees chaotic steering in the game; measured: 14-22 direction reversals
+  per second (ideal lap 0.5). The owner wants it smooth but still at the limit.
+* **Options.** (a) Longer steering filter (adds lag - measured 0.1-0.4 s slower at 0.06 s, WP27).
+  (b) Stronger penalty on the change per step (also taxes the fast corrections a driver at the
+  limit needs). (c) Penalise only direction flips between consecutive decisions.
+* **Decision.** (c), tested against the same driver without it.
+* **Why.** It removes exactly the sawing without making quick, decisive steering costly - the
+  driver keeps its reflexes, which "at the limit" requires.
