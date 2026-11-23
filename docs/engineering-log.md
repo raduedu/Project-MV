@@ -1262,3 +1262,20 @@ the desktop shortcut runs as `pythonw.exe`, but the process search
 the panel and a second start ran a duplicate. Fixed (both names); the
 duplicate servers were ended one by one (never a process tree - training
 was not affected) and one panel restarted.
+
+**Third problem (owner's next test, Spa): the car was under the road and
+facing backwards.** (a) Height: the car was placed at its *previous* height;
+it starts in the pits and Spa's track climbs ~100 m from there, so it was
+put below the road, where CSP's "align on the surface" cannot find the road
+above it, and it kept falling. Fix: the road height is taken from the
+track's own centre line at that point (`ac.worldCoordinateToTrack` ->
+`ac.trackCoordinateToWorld`, works from any start height), refined by a
+short ray down, a long ray from 300 m above as the last resort; the car is
+placed at road + its ride height (measured while it stands in the pits).
+(b) Direction: the sign of `setCarPosition`'s direction argument is not
+documented; the one-time check ran in the same frame as the first
+placement, before the game had applied it, so it compared with the pit
+orientation and never flipped. Fix: checked every frame - three frames in a
+row facing against the intended direction flip it - separately for the
+ghost car. Checked offline: both Lua apps parse (luaparser, scratch only),
+no unknown global names; in-game check by the owner.

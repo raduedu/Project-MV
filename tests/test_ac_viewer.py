@@ -42,7 +42,9 @@ def test_lua_layouts_match_python():
 def test_lua_uses_the_documented_frames():
     """map -> AC world: AC x = map_x, AC z = -map_y; steering negated once (ours: +1 = left)."""
     text = LUA.read_text(encoding="utf-8")
-    assert "vec3(s.x, car.position.y, -s.y)" in text
+    assert "vec3(s.x, lastGround + rideHeight + 0.05, -s.y)" in text      # placed ON the road (WP33 fix)
+    assert "groundY(s.x, -s.y," in text and "ac.trackCoordinateToWorld" in text
+    assert "dirSign = checkDirection(0, dirSign)" in text and "ghostSign = checkDirection(1, ghostSign)" in text
     assert "vec3(math.cos(yaw), 0, -math.sin(yaw))" in text
     assert "controls.steer = math.max(-1, math.min(1, -s.steer))" in text
     # WP33: the recorded gears and engine speed are shown, the game's own gearbox is switched off meanwhile

@@ -91,8 +91,12 @@ local playing = false
 local playT = 0
 local speed = 1.0
 local loop = true
-local dirSign = 1            -- meaning of setCarPosition's `dir` is checked once, like mv_bridge
-local dirChecked = false
+local rideHeight = 0.5       -- car reference point above the road (m), measured at rest (measureRideHeight)
+local lastGround = nil       -- road height at the last placement of our car / of the ghost car
+local lastGhostGround = nil
+local measureRideHeight      -- defined below (declared here: tryLoad uses it)
+local dirSign = 1            -- meaning of setCarPosition's `dir`: checked every frame (checkDirection)
+local ghostSign = 1          -- the same for the ghost car (setAICarPosition may differ)
 local controls = nil
 local lastGear = nil
 local gap = 0
@@ -140,6 +144,8 @@ local function tryLoad()
   if data.seq ~= s1 then return end               -- Python wrote meanwhile: try again next frame
   lap, lapId = l, id
   playT, ghostIdx, heights, lastGear = 0, 1, {}, nil
+  lastGround, lastGhostGround = nil, nil
+  if not playing then pcall(measureRideHeight) end     -- usually standing in the pits right now
   status = 'lap loaded'
 end
 
@@ -173,11 +179,52 @@ local function sample(arr, time, fields)
   return out
 end
 
+-- Height of the road surface under (x, z). Our laps are flat (x, y only), the circuits are not
+-- (Spa climbs ~100 m). First fault in the owner's test: the car was placed at its *old* height,
+-- below the road, and kept falling. Now: (1) the track's own centre line gives the road height
+-- at this point (works from any start height), (2) a short ray down finds the exact surface,
+-- (3) a long ray from high above as a last resort.
 local function groundY(x, z, guessY)
-  local from = vec3(x, guessY + 40, z)
-  local d = physics.raycastTrack(from, vec3(0, -1, 0), 120)
+  local y = guessY
+  local ok, tc = pcall(ac.worldCoordinateToTrack, vec3(x, guessY, z))
+  if ok and tc then
+    local ok2, w = pcall(ac.trackCoordinateToWorld, vec3(tc.x, 0, tc.z))
+    if ok2 and w then y = w.y end
+  end
+  local from = vec3(x, y + 4, z)
+  local d = physics.raycastTrack(from, vec3(0, -1, 0), 12)
   if d and d >= 0 then return from.y - d end
-  return guessY
+  from = vec3(x, y + 300, z)
+  d = physics.raycastTrack(from, vec3(0, -1, 0), 700)
+  if d and d >= 0 then return from.y - d end
+  return y
+end
+
+-- How high the car's reference point sits above the road when it stands on its wheels; measured
+-- while the car is at rest before playing (0.5 m until then), used to place it ON the road.
+function measureRideHeight()                            -- assigns the local declared at the top
+  if car.speedKmh and car.speedKmh < 2 then
+    local h = car.position.y - groundY(car.position.x, car.position.z, car.position.y)
+    if h > 0.05 and h < 1.5 then rideHeight = h end
+  end
+end
+
+-- Direction check, continuous: the meaning of setCarPosition's `dir` argument is not documented
+-- precisely (mv_bridge found the same). Second fault in the owner's test: the one-time check ran
+-- before the game had applied the first placement, so a car facing backwards was never flipped.
+-- Now: if the car faces against its intended direction for 3 frames in a row, flip the sign.
+local wrong = { [0] = 0, [1] = 0 }
+local lastDir = {}
+
+local function checkDirection(index, sign)
+  local c = ac.getCar(index)
+  if c and lastDir[index] and c.look:dot(lastDir[index]) < -0.3 then
+    wrong[index] = wrong[index] + 1
+    if wrong[index] >= 3 then wrong[index] = 0; return -sign end
+  else
+    wrong[index] = 0
+  end
+  return sign
 end
 
 local function worldDir(yaw) return vec3(math.cos(yaw), 0, -math.sin(yaw)) end
@@ -218,7 +265,10 @@ end
 
 local function placeCar(s, time)
   local dir = worldDir(s.yaw)
-  local pos = vec3(s.x, car.position.y, -s.y)
+  dirSign = checkDirection(0, dirSign)
+  lastDir[0] = dir
+  lastGround = groundY(s.x, -s.y, lastGround or car.position.y)
+  local pos = vec3(s.x, lastGround + rideHeight + 0.05, -s.y)
   physics.setCarPosition(0, pos, dir * dirSign)
   physics.setCarVelocity(0, pathVelocity(lap.car, time) or dir * s.speed)
   takeGearbox()
@@ -297,11 +347,7 @@ local function tick(dt)
     end
     local cs = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed', 'steer', 'thr', 'brk', 'gear', 'rpm' })
     cs.gear = lap.car.gear[(locate(lap.car, playT))]      -- gears are steps, not interpolated
-    local dir = placeCar(cs, playT)
-    if not dirChecked and frame % 3 == 0 then           -- verify the car faces the way it drives, once
-      if car.look:dot(dir) < 0 then dirSign = -dirSign end
-      dirChecked = true
-    end
+    placeCar(cs, playT)
     updateGap(cs)
     if lap.ghost and options.ghostAsCar and sim.carsCount > 1 then
       local gs = sample(lap.ghost, playT, { 'x', 'y', 'yaw', 'speed' })
@@ -311,7 +357,10 @@ local function tick(dt)
         physics.setAINoInput(1, true, false)
         ghostCarReady = true
       end
-      physics.setAICarPosition(1, vec3(gs.x, car.position.y, -gs.y), gdir * dirSign)
+      ghostSign = checkDirection(1, ghostSign)
+      lastDir[1] = gdir
+      lastGhostGround = groundY(gs.x, -gs.y, lastGhostGround or lastGround or car.position.y)
+      physics.setAICarPosition(1, vec3(gs.x, lastGhostGround + rideHeight + 0.05, -gs.y), gdir * ghostSign)
       physics.setCarVelocity(1, gdir * gs.speed)
     end
     status = string.format('playing %.2fx', speed)
@@ -325,6 +374,9 @@ local function tick(dt)
   elseif lap then
     if savedAutoShift ~= nil then releaseControls() end   -- lap over / stopped: hand the car back
     status = sim.isPaused and 'game paused' or 'stopped'
+  end
+  if not playing and (not lap or playT == 0) and frame % 30 == 0 then
+    pcall(measureRideHeight)                             -- car standing on its wheels: learn its height
   end
 
   local s = st.seq
