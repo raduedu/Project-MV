@@ -600,7 +600,7 @@ local function keepFresh()
   if now - fresh.since < 10 or (car.speedKmh or 0) < 30 or now - fresh.last < 1.0 then return end
   fresh.last = now
   fresh.fuel = fresh.fuel or math.max(car.fuel or 0, 5)
-  fresh.job = fresh.job % 3 + 1
+  fresh.job = fresh.job % 4 + 1
   local ok, err = true, nil
   if fresh.job == 1 and (car.fuel or 99) < fresh.fuel - 2 then
     ok, err = pcall(physics.setCarFuel, 0, fresh.fuel)
@@ -609,6 +609,17 @@ local function keepFresh()
     ok, err = pcall(physics.setTyresVirtualKM, 0, nil, 0)
   elseif fresh.job == 3 and (car.engineLifeLeft or 1000) < 900 then
     ok, err = pcall(physics.setCarEngineLife, 0, 1000)
+  elseif fresh.job == 4 then                             -- WP56: a stand-in pushed through corners at the
+    local w = car.wheels                                  -- recorded car's speed overheats its tyres; cool
+    local opt = w and w[0] and w[0].tyreOptimumTemperature  -- them back to optimum if 25 C over
+    if opt and opt > 0 then
+      local hot = false
+      for i = 0, 3 do
+        local t = w[i] and (w[i].tyreCoreTemperature or w[i].tyreMiddleTemperature)
+        if t and t > opt + 25 then hot = true end
+      end
+      if hot then ok, err = pcall(physics.setTyresTemperature, 0, nil, opt) end
+    end
   end
   if not ok then fresh.notes = tostring(err) end
 end

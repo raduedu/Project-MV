@@ -229,6 +229,20 @@ def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
 DEMO_ASSISTS = {"DAMAGE": "0", "VISUALDAMAGE": "0", "ABS": "2", "TRACTION_CONTROL": "2", "AUTO_CLUTCH": "1",
                 "AUTO_BLIP": "1", "FUEL_RATE": "0", "TYRE_WEAR": "0", "TYRE_BLANKETS": "1"}
 ASSISTS_BACKUP = BACKUP_DIR / "assists_owner.ini"
+#: which game process the demo assists belong to (WP56): only that game's exit watchdog may restore
+#: the owner's file - an older game's watchdog must not undo a demo that was started after it
+ASSISTS_OWNER = BACKUP_DIR / "assists_owner.pid"
+
+
+def set_assists_owner(pid, marker: Path | None = None) -> None:
+    marker = marker or ASSISTS_OWNER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(pid))
+
+
+def assists_owner(marker: Path | None = None) -> str | None:
+    marker = marker or ASSISTS_OWNER
+    return marker.read_text().strip() if marker.is_file() else None
 
 
 def assists_ini_path() -> Path:
@@ -368,8 +382,10 @@ def open_lap_in_game(payload: dict, link, ghost_car: bool = False, restart: bool
     skin = prev.get("SKIN") if prev.get("MODEL") == car and prev.get("SKIN") in skins else (skins[0] if skins else "")
     ghost_skin = next((s for s in skins if s != skin), skin)
     write_race_ini(build_race_ini(old, car, skin, track, layout, ghost_car=ghost_car, ghost_skin=ghost_skin), path)
-    apply_demo_assists()                                 # restored by the exit watchdog (watch_game)
-    start_game(root)
+    set_assists_owner("starting")                        # from here no older watchdog restores (WP56)
+    apply_demo_assists()                                 # restored by this game's exit watchdog (watch_game)
+    proc = start_game(root)
+    set_assists_owner(getattr(proc, "pid", "unknown"))
     link.load(payload, speed=speed, loop=True)
     warn = "" if steam_running() else " Steam does not seem to be running - the game needs it."
     return {"ok": True, "started": True,
@@ -429,9 +445,13 @@ def watch_game(pid: int, since: float, log: Path | None = None, grace_s: float =
             time.sleep(poll_s)
         return "gave up"
     finally:
-        if restore:
+        # the owner's own assists back (WP55) - but only if this game is the one they were changed for:
+        # when a demo restarts the game, the old game's watchdog wakes up after the new demo's assists
+        # were written and used to put the owner's damage 100 % back for the new session (WP56)
+        if restore and assists_owner() == str(pid):
             try:
-                restore_owner_assists()                  # the owner's own assists back (WP55)
+                restore_owner_assists()
+                ASSISTS_OWNER.unlink(missing_ok=True)
             except Exception:
                 pass
 

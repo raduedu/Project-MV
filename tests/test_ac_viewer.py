@@ -226,6 +226,7 @@ def test_open_lap_in_game_starts_restarts_or_plays(tmp_path, monkeypatch):
     assists.write_text("[ASSISTS]\nABS=1\nDAMAGE=100\n")
     monkeypatch.setattr(L, "assists_ini_path", lambda: assists)
     monkeypatch.setattr(L, "ASSISTS_BACKUP", tmp_path / "backups" / "assists_owner.ini")
+    monkeypatch.setattr(L, "ASSISTS_OWNER", tmp_path / "backups" / "assists_owner.pid")
 
     class Link:
         def __init__(self):
@@ -359,3 +360,28 @@ def test_demo_assists_are_applied_and_the_owners_come_back(tmp_path):
     assert backup.read_text() == owner                              # still the owner's, not demo values
     assert L.restore_owner_assists(path, backup) and path.read_text() == owner and not backup.exists()
     assert not L.restore_owner_assists(path, backup)                # nothing left to restore
+
+
+
+def test_only_the_demo_games_watchdog_restores_the_owners_assists(tmp_path, monkeypatch):
+    """WP56: restarting a demo closes game A and starts game B; A's watchdog wakes up late and must not
+    put the owner's damage-100 assists back under B's demo."""
+    import subprocess
+    import sys
+    import mv.ac.launch as L
+    path, backup, marker = tmp_path / "assists.ini", tmp_path / "assists_owner.ini", tmp_path / "owner.pid"
+    monkeypatch.setattr(L, "assists_ini_path", lambda: path)
+    monkeypatch.setattr(L, "ASSISTS_BACKUP", backup)
+    monkeypatch.setattr(L, "ASSISTS_OWNER", marker)
+    path.write_text("[ASSISTS]" + chr(10) + "DAMAGE=100" + chr(10))
+    L.apply_demo_assists()
+    L.set_assists_owner(999999)                      # game B (still running) owns the demo assists
+    log = tmp_path / "log.txt"
+    log.write_text("")
+    done = subprocess.run([sys.executable, "-c", "pass"])            # game A: already gone
+    assert done.returncode == 0
+    L.watch_game(123456789, 0.0, log, poll_s=0.01, max_hours=0.001)  # A's watchdog, A not alive
+    assert "DAMAGE=0" in path.read_text() and backup.exists()        # B's demo assists untouched
+    L.set_assists_owner(123456789)
+    L.watch_game(123456789, 0.0, log, poll_s=0.01, max_hours=0.001)  # now it is the owner: restores
+    assert "DAMAGE=100" in path.read_text() and not backup.exists() and not marker.exists()

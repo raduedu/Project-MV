@@ -2086,3 +2086,23 @@ copy is still there from a crashed demo, it is restored before a new demo, so de
 saved as the owner's. Tests: `test_demo_assists_are_applied_and_the_owners_come_back`, and the
 launcher test now uses a temporary assists file (checked: the owner's real file is untouched -
 still ABS 1, damage 100).
+
+## WP56 — Owner's runs: Spa nearly perfect; Monza "suspension broken, tyres blew" 🕓 (fixed offline)
+
+**Owner (2026-11-24 ~16:45).** Spa: "only one or two places where it goes a bit off track, otherwise it's
+perfect". Monza (started right after, the launcher restarting the game): suspension looked broken and
+the tyres blew.
+
+**Root cause (most likely).** A race between two game instances' exit watchdogs (WP55). Switching
+circuit: the launcher closes game A, writes the demo assists, starts game B. A's watchdog polls once
+a second; when it woke up after B's demo assists were written, it put the owner's assists back
+(damage 100 %, wear on) - for B's session. Damage on at Monza's kerbs = broken suspension and failed
+tyres; Spa had been a fresh start (no older watchdog). Afterwards the owner's file was back and no
+backup was left, consistent with this sequence (cannot be proven after the fact).
+
+**Fix.** `runs/ac_launch/assists_owner.pid` records which game process the demo assists belong to
+("starting" while the new game is being launched, then its pid); a watchdog restores the owner's file
+only if it watches that game. Test `test_only_the_demo_games_watchdog_restores_the_owners_assists`.
+Also: the upkeep cools tyres back to their optimum when one runs 25 C over (the stand-in is pushed
+through corners at the recorded car's speeds). The one or two spots off the track at Spa are left as
+they are (follower lag at FS-car speeds; not worth a wider margin for the whole lap). 179 tests pass.
