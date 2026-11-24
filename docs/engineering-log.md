@@ -2008,3 +2008,23 @@ was the Tatuus itself.) **Fix:** the road surface under the car is found by a ra
 (`groundY`, the same as the ghost uses) and the model stands on it; the old offset is only a
 fallback. The red accent was bluish (0.84, 0, 0.11) and read as pink in the game's colour grading:
 now (0.80, 0.03, 0.02).
+
+## WP52 — FS car shown with the detailed stand-in body, painted plain 🕓 (offline checks; in-game check by the owner)
+
+**Owner (16:11, screenshot).** Our drawn FS model (WP47/51) now stands on the road but is "incredibly
+low poly"; use "the higher generic version" seen earlier (the run that jumped over a bump).
+
+**What that version was.** The Tatuus FA1 stand-in's own 3-D model - detailed, but branded (the owner's
+first screenshot shows "ABARTH", "Scuola Federale CSAI", tyre-maker lettering).
+
+**Approach.** Keep its detailed body and remove the names while the demo runs, without touching any
+game file: CSP can replace a material's texture with a solid colour (`SceneReference:setMaterialTexture
+('txDiffuse', rgbm)`) and hide meshes. The model file's material table was read (offline, read-only:
+27 materials, 42 textures in `tatuusfa1.kn5`, version 6). Branded: `RT_Skin` (body livery,
+SkinBase.dds) -> plain light grey-white, `RT_Decals` (sponsor decals) -> hidden, `RT_Tire_Side` (tyre
+lettering) -> plain black. `vehicles/ac_stand_ins.yaml`: `fs_generic_ev: {car: tatuusfa1, repaint:
+{...}}`; the payload's model field carries `mv:repaint:MAT=rrggbb;MAT=hide` (60 bytes of 159); the app
+applies it once per lap load and logs what it found. Our drawn model stays available
+(`draw: fs_generic`). Not covered: the driver figure's suit and helmet (the game's generic driver).
+
+**Verification.** Lua parses; payload checked for the Spa FS lap; 177 tests pass. Not seen in the game.

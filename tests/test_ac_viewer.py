@@ -304,9 +304,12 @@ def test_fs_car_is_drawn_with_our_own_generic_model():
     """WP47: the FS car's stand-in entry asks the viewer to hide the game car and draw MV's own
     unbranded FS model; the Lua side has the model, loads it, hides/restores the stand-in, and
     falls back to the visible stand-in if drawing fails."""
-    from mv.ac.launch import stand_in_model
-    assert stand_in_model("fs_generic_ev") == "fs_generic"
-    assert stand_in_model("porsche_taycan_turbo_gt_weissach") is None      # plain stand-in, no model of ours
+    from mv.ac.launch import stand_in_model, stand_in_repaint
+    # WP52: the owner preferred the stand-in's detailed body, painted plain, to our drawn model
+    assert stand_in_model("fs_generic_ev") is None
+    rp = stand_in_repaint("fs_generic_ev")
+    assert rp and all(v == "hide" or re.fullmatch(r"[0-9a-fA-F]{6}", v) for v in rp.values())
+    assert stand_in_repaint("porsche_taycan_turbo_gt_weissach") == {}         # plain stand-in
     app = ROOT / "mv" / "ac" / "plugin" / "apps" / "lua" / "mv_viewer"
     model = (app / "mv_fsmodel.lua").read_text(encoding="utf-8")
     viewer = (app / "mv_viewer.lua").read_text(encoding="utf-8")
@@ -315,6 +318,7 @@ def test_fs_car_is_drawn_with_our_own_generic_model():
     assert "lap.model == 'mv:fs_generic'" in viewer
     assert "setVisible(visible)" in viewer and "ac.onRelease" in viewer        # never left invisible
     assert "fsState.broken" in viewer                                          # failure -> stand-in shown
+    assert "mv:repaint:" in viewer and "setMaterialTexture('txDiffuse'" in viewer   # WP52 plain repaint
     # nothing branded in the model: only generic names in the file
     for word in ("tatuus", "ferrari", "porsche", "dallara", "red bull"):
         assert word not in model.lower()

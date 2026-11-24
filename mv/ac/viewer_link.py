@@ -233,8 +233,14 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
         car["rpm"] = engine_rpm(car["speed"], car["gear"], body)
         label += f" | shown with the {body.name} body"
         vp = body
-        from mv.ac.launch import car_ids_of, stand_in_model
+        from mv.ac.launch import car_ids_of, stand_in_model, stand_in_repaint
         drawn = next((d for d in (stand_in_model(c) for c in car_ids_of(meta)) if d), None)
+        repaint = next((r for r in (stand_in_repaint(c) for c in car_ids_of(meta)) if r), {})
+        if repaint and not drawn:               # the stand-in is shown, painted plain (WP52)
+            model = "mv:repaint:" + ";".join(f"{k}={v}" for k, v in repaint.items())
+            if len(model.encode()) >= 160:
+                raise ValueError("repaint table too long for the viewer's model field (159 bytes)")
+            label = label.replace(f"shown with the {body.name} body", f"shown with the {body.name} body, painted plain")
         if drawn:                               # the viewer hides the stand-in and draws our own model (WP47)
             model = f"mv:{drawn}"
             label = label.replace(f"shown with the {body.name} body", f"MV {drawn} model (moved as {body.name})")

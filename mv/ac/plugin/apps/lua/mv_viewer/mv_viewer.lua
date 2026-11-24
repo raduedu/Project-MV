@@ -475,6 +475,35 @@ local function setStandInVisible(visible)
   fsState.hidden = not visible
 end
 
+-- WP52: a stand-in shown with its branded materials painted plain ("mv:repaint:MAT=rrggbb;MAT=hide").
+-- Only for this session; the game's files are not touched.
+local repainted = nil
+
+local function applyRepaint()
+  if not lap or not lap.model or lap.model:sub(1, 11) ~= 'mv:repaint:' or repainted == lap.model then return end
+  repainted = lap.model
+  local root = ac.findNodes('carRoot:0')
+  local done, missing = {}, {}
+  for item in lap.model:sub(12):gmatch('[^;]+') do
+    local mat, val = item:match('^([^=]+)=(.+)$')
+    if mat then
+      local ok, err = pcall(function()
+        local meshes = root:findMeshes('material:' .. mat)
+        if meshes:size() == 0 then missing[#missing + 1] = mat return end
+        if val == 'hide' then
+          meshes:setVisible(false)
+        else
+          local r, g, b = tonumber(val:sub(1, 2), 16), tonumber(val:sub(3, 4), 16), tonumber(val:sub(5, 6), 16)
+          meshes:setMaterialTexture('txDiffuse', rgbm(r / 255, g / 255, b / 255, 1))
+        end
+        done[#done + 1] = mat
+      end)
+      if not ok then missing[#missing + 1] = mat .. ' (' .. tostring(err) .. ')' end
+    end
+  end
+  ac.log('mv_viewer repaint: ' .. table.concat(done, ', ') .. (#missing > 0 and ('; not found: ' .. table.concat(missing, ', ')) or ''))
+end
+
 local function fsTick(dt)
   local want = fsMode() and active
   if want ~= fsState.hidden then setStandInVisible(not want) end
@@ -616,6 +645,8 @@ local function tick(dt)
     if lap then status = sim.isPaused and 'game paused' or 'stopped - press Play' end
   end
   pcall(updateGhost)
+  local rpOk, rpErr = pcall(applyRepaint)
+  if not rpOk then ac.log('mv_viewer repaint: ' .. tostring(rpErr)) end
   local fsOkTick, fsErr = pcall(fsTick, dt)
   if not fsOkTick then ac.log('mv_viewer FS: ' .. tostring(fsErr)) end
 

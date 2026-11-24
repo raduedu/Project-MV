@@ -103,6 +103,17 @@ def car_ids_of(meta: dict, vp=None) -> list[str]:
     return out
 
 
+def stand_in_repaint(car: str) -> dict[str, str]:
+    """{material: hex colour or "hide"} to paint a stand-in plain (no names on it), or {} (WP52)."""
+    import yaml
+    f = ROOT / "vehicles" / "ac_stand_ins.yaml"
+    if not f.is_file():
+        return {}
+    entry = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("stand_ins") or {}).get(car)
+    rp = entry.get("repaint") if isinstance(entry, dict) else None
+    return {str(k): str(v) for k, v in (rp or {}).items()}
+
+
 def stand_in_model(car: str) -> str | None:
     """Our own model the viewer draws instead of the stand-in's body ("fs_generic"), or None."""
     import yaml
