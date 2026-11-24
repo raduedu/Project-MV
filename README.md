@@ -73,7 +73,7 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 
 | I want to… | Command |
 |---|---|
-| Import a car from my Assetto Corsa | `scripts\import_ac_car.py ks_porsche_911_gt3_rs` (`--list porsche` to search) |
+| Import a car from my Assetto Corsa | `scripts\import_ac_car.py ks_porsche_911_gt3_rs` (`--list porsche` to search; `--all` or `--category racing` for many - see "Car catalogue") |
 | Import a circuit from my Assetto Corsa | `scripts\import_ac_track.py imola monza spa mugello` (`--list`) |
 | Check a car's numbers against a road test | `scripts\vehicle_check.py ks_porsche_911_gt3_rs` |
 | Measure simulator speed | `scripts\benchmark_env.py --envs 16384` |
@@ -90,6 +90,9 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 | Tune a car to match the game (system identification) | record with `scripts\ac_drive.py ... --record x.npz`, then `scripts\sysid_fit.py --vehicle <car> x.npz` |
 | Drive in the game | `scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run` (then see its `--help`) |
 | Show a lap in the game, with the ghost | control panel -> Laps -> Watch -> **View in Assetto Corsa**, or `scripts\ac_view.py --best ks_porsche_911_gt3_rs imola` (the button starts the game on the right circuit and car; setup: docs/07, "Viewing laps in the game") |
+| Train on real circuits too (some always held out) | add `--real-tracks all` to `scripts	rain.py` (which circuits: `tracks/sets.yaml`) |
+| Train on many cars at once | `scripts	rain.py --vehicle @favourites,@racing,-fs_generic_ev ...` (catalogue groups, see below) |
+| Race a real F1 lap in equal machinery | `scripts1_benchmark.py` (fetch, align, fit the car), then `scripts1_benchmark.py --race runs\<run>est.pt` - private data, never committed (D-038, log WP43) |
 | Run the tests | `-m pytest tests -q` |
 | Publish / update the private GitHub repo | `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` |
 
@@ -103,6 +106,32 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 | `vehicles/library/porsche_911_gt3_rs_992.yaml` | Porsche 911 GT3 RS (992) | public data |
 | `vehicles/library/porsche_918_spyder.yaml` | Porsche 918 Spyder Weissach | public data |
 | `vehicles/library/fs_generic_ev.yaml` | Generic Formula Student EV (typical class values, no real car) | estimates |
+
+### Car catalogue and favourites
+
+Every car installed in Assetto Corsa can be imported - one by one or all at once - and is sorted
+into a category read from the game's own description of the car (`ui/ui_car.json`):
+**formula** (single-seaters), **prototype** (LMP, Group C), **gt3**, **gt2_gte** (GT2/GTE/GT1),
+**gt4**, **touring_cup** (touring, cup and other race cars) - together the *racing* cars - and
+road, vintage, drift. The rules and a small table of exceptions are in `mv/vehicle/catalog.py`.
+
+| I want to… | Command |
+|---|---|
+| Import every installed car | `scripts\import_ac_car.py --all` (~5-10 s per car, CPU only) |
+| Import only racing cars / one category | `scripts\import_ac_car.py --category racing` (or `gt3`, `formula,prototype`, `favourites`) |
+| See the catalogue table | `scripts\import_ac_car.py --table` |
+
+Each imported car is checked: our power, mass and top speed against the figures the game
+advertises for it, and a few seconds of full throttle and full braking in our simulator.
+Cars come out *ok*, *suspicious* (usable, but a number is far off - the reason is shown) or
+*failed*; empty DLC folders are reported as *not installed* and skipped. Results are kept in
+`vehicles/local/_catalog.json` (git-ignored, like all game data).
+
+**Favourites** are listed in `vehicles/favourites.yaml` (committed, car ids only). The control
+panel shows them first, starred, wherever a car is picked (Plan, Tools, Import); all other cars
+follow, folded under "Other cars (N)" and grouped by category. Click the star to add or remove
+a favourite. The Import tab also has **Import all racing cars**. No IndyCar is installed in the
+base game.
 
 ## Adding a new car
 

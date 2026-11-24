@@ -481,3 +481,34 @@ supersedes it — do not edit history.*
 * **Why.** The big network failed because its training steps were too large, not because of
   its size as such (WP30 interim); a medium size with tighter steps tests that directly at a
   third of the cost. Supersedes nothing; extends D-035 (zig-zag) and WP30.
+
+### D-038 — Real F1 data: benchmark in equal machinery, private use only
+
+* **Context.** The owner asks to race Max Verstappen in equal machinery, ideally with openly
+  licensed data. Extends D-031 (no imitation of a named driver; public data at most a benchmark).
+* **Options.** (a) No real-driver data. (b) Imitate his inputs (behaviour cloning). (c) His laps
+  as the benchmark, and his telemetry to *define the car* (fit an F1 car until our physics
+  reproduces his speeds), our driver learning by RL to beat that lap in that car.
+* **Decision.** (c), with OpenF1 historical data (2023 on), cached and kept on the owner's computer
+  only - never committed, published or shown on the public replay page.
+* **Why.** (b) is impossible (no steering in the data) and against D-031. (c) uses only what the
+  data does contain (speeds, gears, positions) and gives a real-world yardstick. The data belongs to
+  Formula 1 and no licence is granted by OpenF1/FastF1; private, non-commercial research use with no
+  redistribution is the most that can be justified - the same rule as for the game's data.
+
+### D-039 — Real circuits in training, with a permanent held-out set
+
+* **Context.** Owner: use all tracks. Until now imported circuits were validation only.
+* **Decision.** `--real-tracks all` adds every imported circuit except those in
+  `tracks/sets.yaml: never_train` (Mugello, Laguna Seca, Brands Hatch) and broken imports.
+* **Why.** Real circuits contain combinations the generator does not make; the benchmark circuits
+  are ones a real driver also practises on. Keeping three out forever keeps the "never seen this
+  circuit" result honest. Supersedes the "never trains on these" line in 01-architecture §6.
+
+### D-040 — Distillation copies the critic, not only the actor
+
+* **Context.** Two distilled networks (WP30, WP44) sped up and crashed with normal update sizes.
+* **Decision.** A teacher warm start copies actor, critic and return scaling.
+* **Why.** PPO judges actions with the critic; an expert actor with a newborn critic is pushed
+  towards whatever the critic over-values - here speed. Copying is cheap (same mini-batches).
+  Revises D-037's reading of the WP30 failure (step size); the KL stop stays as a safeguard.

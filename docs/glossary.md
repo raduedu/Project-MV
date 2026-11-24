@@ -10,6 +10,8 @@ topic. Where a term has a symbol in the code it is given in `code font`.
 | Reinforcement learning (RL) | Learning by trial and error: try actions, get a score ("reward"), do more of what scored well. No human shows the right answer. |
 | Policy / driver / actor | The neural network that turns an observation into an action. |
 | Critic / value function | A second network that predicts how much reward the driver will collect from the current situation onward. Used only during training. |
+| Distillation (teacher warm start) | Copying a trained driver (the teacher) into a new, e.g. bigger, network before training continues. Since WP44 both halves are copied: the actor (what to do) and the critic (how good the situation is). |
+| Held-out (car or circuit) | Kept out of training on purpose, so how well the driver handles something it has never seen is measured, not assumed. |
 | Observation | The numbers the driver is given each tick (98 of them; see architecture §4.3). |
 | Action | What the driver outputs: steering and pedal, each between −1 and +1. |
 | Reward | The score for one tick: metres of progress minus penalties. |
@@ -79,6 +81,10 @@ topic. Where a term has a symbol in the code it is given in `code font`.
 
 | Term | Meaning |
 |---|---|
+| Equal machinery | Comparing two drivers in the same car. For the F1 benchmark (WP43) "the same car" is a car file fitted until our physics reproduces the real car's speeds at the corners and on the straights of that lap. |
+| OpenF1 | A free, unofficial service that serves Formula 1 live-timing data (speed, gear, throttle, brake on/off, position) from 2023 on. The data belongs to Formula 1: used privately only (D-038). |
+| Alignment (of a real lap) | Finding the rotation, scale and shift that lay a real car's recorded positions onto our copy of the circuit (iterative closest point: match each point to the nearest point of our circuit, solve for the best transform, repeat). |
+| Timing line | Where a lap starts and ends. F1's timing line and the game's start line can be up to ~180 m apart; real laps are re-cut at our line. |
 | AC | Assetto Corsa (the original, 2014) by Kunos Simulazioni. |
 | CSP | Custom Shaders Patch — community extension to AC that, among much else, lets Lua scripts control the car. |
 | Content Manager | The community launcher for AC. |
@@ -87,6 +93,23 @@ topic. Where a term has a symbol in the code it is given in `code font`.
 | Shared memory | A block of memory AC publishes with live telemetry that other programs can read. |
 | Bridge | Our code that reads that telemetry and sends controls back (`mv/ac/bridge`). |
 | Shadow environment | A one-car copy of the training environment kept in step with the game so observations are computed by the training code itself. |
+| `ui_car.json` | The description file in each car folder (`ui/`): display name, class "race"/"street", tags such as `#GT3`, and advertised figures ("specs": bhp, weight, top speed, 0-100). The catalogue reads it to sort cars and to check our numbers. |
+| DLC | Downloadable content - paid add-on car packs. Steam creates empty folders for DLC cars that are not owned; the importer reports them as "not installed". |
+| bhp / whp | Brake horsepower = engine power (1 hp = 0.7457 kW). "whp" = horsepower measured at the wheels, after drivetrain losses, so ~10-20 % less. |
+| Car catalogue | `mv/vehicle/catalog.py`: every car we can drive, its category, favourite star and check status. |
+| Favourites | Car ids listed in `vehicles/favourites.yaml`; shown first (starred) wherever the control panel asks for a car. |
+| Plausibility check | After importing a car: our power, mass and top speed against the game's own figures, plus a few seconds of full throttle and full braking in our simulator. "Suspicious" = usable but a number is far off; "failed" = unusable. |
+
+## Racing car categories
+
+| Term | Meaning |
+|---|---|
+| Formula / single-seater | Open-wheel, one-seat racing car (F1, Formula Abarth, Formula Student, IndyCar). |
+| Prototype (LMP, Group C) | Purpose-built closed sports-racing car for endurance races: Le Mans Prototypes (LMP1/2/3) and their 1980s ancestors, Group C. |
+| GT3 | Race cars derived from road sports cars, power and weight equalised by the organiser ("balance of performance"); ~370-440 kW, ~1250-1300 kg. |
+| GT2 / GTE / GT1 | The faster professional GT classes (GTE = Le Mans GT Endurance; GT1 = the 1990s top GT class). |
+| GT4 | Entry-level GT race cars, closer to the road car than GT3; ~300 kW. |
+| Touring / cup car | Race cars from saloons (touring, DTM, Group A) and one-make "cup" series where everyone drives the same car. |
 
 ## Formula Student
 

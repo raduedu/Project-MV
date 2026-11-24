@@ -11,8 +11,10 @@ What happens
   circuits.  A share of the circuits is replaced by brand-new ones every few
   updates, so the driver never gets to memorise a layout.
 * Every ``--eval-every`` updates the driver is tested, without exploration
-  noise, on validation tracks it never trains on: fixed random circuits plus any
-  imported real circuits in ``tracks/local`` (see scripts/import_ac_track.py).
+  noise, on validation tracks: fixed random circuits plus the imported real
+  circuits listed in ``tracks/sets.yaml`` (see scripts/import_ac_track.py).
+* ``--real-tracks all`` adds imported real circuits to the training pool, except
+  the ones ``tracks/sets.yaml`` holds out (so "unseen real circuit" stays measured).
 * Progress is printed, written to ``runs/<name>/log.csv`` and to TensorBoard
   (``tensorboard --logdir runs``).  ``runs/<name>/latest.pt`` is the newest
   driver, ``best.pt`` the one with the best validation result so far.
@@ -46,7 +48,30 @@ from mv.rl.pretrain import warm_start  # noqa: E402
 from mv.control.scripted import ScriptedDriver  # noqa: E402
 from mv.track.generator import max_length_m, random_track, random_tracks  # noqa: E402
 from mv.track.track import Track, TrackBatch  # noqa: E402
+from mv.track.sets import trainable_names, validation_names  # noqa: E402
 from mv.vehicle.params import find_vehicle, load_vehicle  # noqa: E402
+
+
+def resolve_cars(spec: str) -> list[str]:
+    """Car ids from ``--vehicle``/``--holdout``: names, catalogue groups (``@racing``) and removals (``-name``).
+
+    Groups only take cars whose plausibility check passed ("ok"): a car whose
+    imported numbers look wrong (e.g. the game loads 195 l of fuel) would teach the
+    driver wrong physics. Name such a car explicitly to use it anyway.
+    """
+    out: list[str] = []
+    drop: set[str] = set()
+    for word in [w.strip() for w in spec.split(",") if w.strip()]:
+        if word.startswith("-"):
+            drop.add(word[1:])
+        elif word.startswith("@"):
+            from mv.vehicle.catalog import list_cars, select_ids
+            cars = list_cars()
+            ok = {c.id for c in cars if c.imported and c.status == "ok"}
+            out += [i for i in select_ids(word[1:], cars) if i in ok and i not in out]
+        elif word not in out:
+            out.append(word)
+    return [i for i in out if i not in drop]
 
 
 def validation_tracks(preset: str, count: int) -> list[Track]:
@@ -56,7 +81,7 @@ def validation_tracks(preset: str, count: int) -> list[Track]:
         t.name = f"val_random_{i}"
     local = ROOT / "tracks" / "local"
     if not preset.startswith("fs") and local.is_dir():          # real circuits only for full-size cars
-        tracks += [Track.load(p) for p in sorted(local.glob("*.npz"))]
+        tracks += [Track.load(local / f"{n}.npz") for n in validation_names(local)]   # tracks/sets.yaml
     return tracks
 
 
@@ -136,7 +161,9 @@ def keep_awake() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vehicle", default="ks_porsche_911_gt3_rs",
-                    help="car file name; several names separated by commas train ONE driver for all of them")
+                    help="car file name; several names separated by commas train ONE driver for all of them; "
+                         "groups from the car catalogue start with @: @favourites, @racing, @gt3, @formula ... "
+                         "(only cars whose plausibility check is ok; a name with a leading - removes it)")
     ap.add_argument("--name", default=None, help="run name (folder under runs/)")
     ap.add_argument("--envs", type=int, default=4096)
     ap.add_argument("--tracks", type=int, default=256, help="size of the pool of training circuits")
@@ -173,6 +200,12 @@ def main() -> None:
                          "(nearly) in the gear that pulls hardest, default 0.93 (engineering log WP36)")
     ap.add_argument("--min-noise", type=float, default=None,
                     help="floor for the exploration noise (default 0.03)")
+    ap.add_argument("--real-tracks", default="",
+                    help="also train on imported real circuits: 'all' or comma-separated names; circuits held out in "
+                         "tracks/sets.yaml (never_train) are always excluded (engineering log WP42)")
+    ap.add_argument("--real-share", type=float, default=0.25,
+                    help="with --real-tracks: share of the training pool that is real circuits (they are repeated "
+                         "to reach it and are never replaced by the refresh)")
     ap.add_argument("--refresh-every", type=int, default=10, help="replace circuits every N updates")
     ap.add_argument("--refresh-frac", type=float, default=0.1, help="share of circuits replaced each time")
     ap.add_argument("--hours", type=float, default=None, help="stop after this much wall-clock time")
@@ -205,7 +238,7 @@ def main() -> None:
         keep_awake()
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
-    vps = [load_vehicle(find_vehicle(v.strip())) for v in args.vehicle.split(",") if v.strip()]
+    vps = [load_vehicle(find_vehicle(v)) for v in resolve_cars(args.vehicle)]
     vp = vps[0]
     name = args.name or f"{vp.name}_{time.strftime('%Y%m%d_%H%M%S')}"
     run = ROOT / "runs" / name
@@ -228,7 +261,11 @@ def main() -> None:
         env_cfg.rand_grip = tuple(args.grip_range)
     if args.vary_cars:
         env_cfg.vary_car = True
-    holdout_vps = [load_vehicle(find_vehicle(v.strip())) for v in args.holdout.split(",") if v.strip()]
+    holdout_vps = [load_vehicle(find_vehicle(v)) for v in resolve_cars(args.holdout)]
+    held = {v.name for v in holdout_vps}
+    if held & {v.name for v in vps}:                      # a held-out car must never be trained on
+        vps = [v for v in vps if v.name not in held]
+    print(f"{len(vps)} training car(s): {', '.join(v.name for v in vps)}", flush=True)
     if args.steer_filter is not None:
         env_cfg.steer_filter_s = args.steer_filter
     if args.steer_penalty is not None:
@@ -246,6 +283,15 @@ def main() -> None:
     print(f"generating {args.tracks} training circuits ({args.preset}) ...", flush=True)
     pool = [random_track(rng, args.preset, name=f"train_{i}") for i in range(args.tracks)]
     ds = pool[0].ds
+    n_generated = len(pool)                       # ids >= n_generated are real circuits: never refreshed
+    if args.real_tracks:
+        names = trainable_names(args.real_tracks)
+        real = [Track.load(ROOT / "tracks" / "local" / f"{n}.npz") for n in names]
+        # repeat them so they make up about --real-share of the pool (each car picks a pool entry at random)
+        copies = max(1, round(args.real_share / max(1e-6, 1 - args.real_share) * n_generated / max(len(real), 1)))
+        pool += [t for t in real for _ in range(copies)]
+        print(f"  + {len(real)} real circuits x {copies} = {len(pool) - n_generated} of {len(pool)} pool entries: "
+              f"{', '.join(names)}", flush=True)
     # reserve room for the longest circuit the generator can produce, so replacements always fit
     from mv.track.generator import PRESETS
     batch = TrackBatch(pool, device=args.device, ds=ds, min_points=int(max_length_m(args.preset) / ds) + 8)
@@ -294,6 +340,11 @@ def main() -> None:
             obs_norm = tnet.obs_norm                      # same input scaling -> student copies it
             def act(self, obs, deterministic=True):
                 return tnet.act(obs, deterministic=True)
+            def value(self, obs):                         # its critic too (log WP44)
+                return tnet.critic(tnet.obs_norm(obs)).squeeze(-1)
+
+        # the copied critic's numbers are in the teacher's return scale - use the same scale
+        ppo.ret_norm.load_state_dict(torch.load(args.teacher, map_location=args.device, weights_only=False)["ret_norm"])
 
         n_params = sum(p.numel() for p in ppo.net.actor.parameters())
         t_std = float(tnet.log_std.detach().exp().mean())
@@ -301,7 +352,8 @@ def main() -> None:
               f"(teacher noise {t_std:.3f}) ...", flush=True)
         info = warm_start(ppo, _Teacher(), steps=args.warm_steps, noise=0.1, critic_updates=40,
                           start_std=args.reset_noise or t_std, buffer_steps=48, grad_steps=4, lr=5e-4)
-        print(f"warm start done: imitation error {info['imitation_error']:.5f}", flush=True)
+        print(f"warm start done: imitation error {info['imitation_error']:.5f}, "
+              f"critic copy error {info['value_error']:.5f}", flush=True)
         # A fresh optimiser's first steps move EVERY weight by the full learning rate; in a wide
         # network that rewrites the copied driver in one update (smoke test: KL 450, 0 % of
         # tracks after update 1).  Start tiny; the KL rule raises it x1.5 per step as allowed.
@@ -347,8 +399,8 @@ def main() -> None:
 
             # ---- keep the circuits fresh -------------------------------------------------
             if args.refresh_every > 0 and it % args.refresh_every == 0:
-                k = max(int(batch.num_tracks * args.refresh_frac), 1)
-                ids = rng.choice(batch.num_tracks, size=k, replace=False)
+                k = max(int(n_generated * args.refresh_frac), 1)
+                ids = rng.choice(n_generated, size=k, replace=False)      # real circuits stay in the pool
                 for tid in ids:
                     batch.replace(int(tid), random_track(rng, args.preset, name=f"train_{it}_{tid}"))
                 env.tracks_replaced(torch.as_tensor(ids, device=env.device))

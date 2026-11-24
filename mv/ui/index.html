@@ -97,13 +97,26 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
 .kind { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; text-transform: uppercase; white-space: nowrap; }
 .kind.learned { background: #fbe4e3; color: var(--accent); } .kind.reference { background: #e5eefc; color: var(--info); }
 .kind.rule-based { background: var(--bar); color: var(--muted); }
-@media (prefers-color-scheme: dark) { .kind.learned { background: #401c1a; } .kind.reference { background: #1b2a45; } }
+.kind.benchmark { background: #fff1cc; color: #8a5a00; }
+@media (prefers-color-scheme: dark) { .kind.learned { background: #401c1a; } .kind.reference { background: #1b2a45; } .kind.benchmark { background: #3d300f; color: #f0c060; } }
 tr.sel td { background: var(--bar); }
 a.b { color: var(--ink); display: inline-block; }
 .cars { overflow-wrap: anywhere; }
 details.donejobs { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
 details.donejobs summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
 details.donejobs .job:first-of-type { border-top: 1px solid var(--line); }
+/* ---------- car pickers: favourites first, other cars folded by category ---------- */
+.star { background: none; border: 0; padding: 0 4px; font-size: 16px; line-height: 1; cursor: pointer; color: var(--muted); vertical-align: -1px; }
+.star.on { color: #e0a100; }
+.star:hover { color: #e0a100; }
+details.morecars { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; }
+details.morecars > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+.cathead { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 10px 0 4px; font-weight: 600; }
+.cathead .racing { color: var(--accent); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.warnmark { color: var(--warn); cursor: help; margin-left: 3px; }
+.state.warn { background: #fdf0db; color: var(--warn); }
+@media (prefers-color-scheme: dark) { .state.warn { background: #3a2c12; } }
+.carlist { padding: 0 8px 8px; }
 .speedkey { height: 8px; border-radius: 4px; background: linear-gradient(90deg, hsl(230,85%,55%), hsl(150,85%,45%), hsl(55,95%,50%), hsl(0,85%,55%)); }
 /* ---------- phones (engineering log WP38): same page, laid out for a narrow screen ---------- */
 @media (max-width: 640px) {
@@ -129,10 +142,15 @@ details.donejobs .job:first-of-type { border-top: 1px solid var(--line); }
   .hud .big { font-size: 24px; }
   pre { max-height: 220px; }
   .toast { left: 10px; right: 10px; bottom: 10px; max-width: none; }
+  #carlist td:last-child { white-space: normal !important; width: 1%; }          /* badge above the button */
+  #carlist td:last-child .state { display: block; margin-bottom: 4px; text-align: center; }
+  #carlist td:last-child .b { white-space: nowrap; }
+  #carlist .hint, #f_cars label { overflow-wrap: anywhere; }
 }
 @media (pointer: coarse) {                                 /* finger-sized buttons on touch screens */
   button.b, nav button { min-height: 38px; }
   button.s { min-height: 32px; padding: 4px 10px; }
+  .star { min-width: 32px; min-height: 32px; }
 }
 </style>
 </head>
@@ -194,7 +212,7 @@ details.donejobs .job:first-of-type { border-top: 1px solid var(--line); }
       <label>Name (letters, digits, _ and -)</label>
       <input id="f_name" placeholder="e.g. gt3rs_limit_v2">
       <label>Car(s) - several = one driver for all of them</label>
-      <div id="f_cars" class="checks"></div>
+      <div id="f_cars"></div>
       <div class="row">
         <div><label>Tracks</label><select id="f_preset"></select></div>
         <div><label>Hours</label><input id="f_hours" type="number" value="2" min="0.1" step="0.5"></div>
@@ -225,15 +243,22 @@ details.donejobs .job:first-of-type { border-top: 1px solid var(--line); }
   <div class="grid2">
     <div class="card">
       <h2>Cars from Assetto Corsa</h2>
-      <input id="carq" placeholder="Search, e.g. porsche">
-      <div class="list" style="margin-top:8px"><table id="carlist"></table></div>
-      <div class="hint">Creates <code>vehicles/local/&lt;car&gt;.yaml</code> (kept off GitHub - it is Kunos data).</div>
+      <input id="carq" placeholder="Search, e.g. porsche or gt3">
+      <div class="list carlist" style="margin-top:8px"><div id="carlist"></div></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="b primary" id="btnImportRacing">Import all racing cars</button>
+        <button class="b" id="btnImportAll">Import all cars</button>
+      </div>
+      <div class="hint">Creates <code>vehicles/local/&lt;car&gt;.yaml</code> (kept off GitHub - it is Kunos data) and checks it:
+        power, mass and top speed against the game's own figures, plus a short full-throttle and braking run in our simulator.
+        <span class="warnmark">&#9888;</span> = suspicious numbers (hover for the reason). &#9733; = favourite, shown first everywhere.
+        Racing = Formula, prototypes, GT3, GT2/GTE, GT4, touring/cup.</div>
     </div>
     <div class="card">
       <h2>Tracks from Assetto Corsa</h2>
       <input id="trackq" placeholder="Search, e.g. monza">
       <div class="list" style="margin-top:8px"><table id="tracklist"></table></div>
-      <div class="hint">Creates <code>tracks/local/&lt;track&gt;.npz</code>; imported tracks are used for validation and evaluation, never for training.</div>
+      <div class="hint">Creates <code>tracks/local/&lt;track&gt;.npz</code>; imported circuits are used for validation and evaluation, and for training with <code>--real-tracks</code> except those held out in <code>tracks/sets.yaml</code>.</div>
     </div>
   </div>
 </section>
@@ -371,16 +396,63 @@ function jobHTML(j) {
 }
 
 // ---------------- plan ----------------
+// ---------------- car pickers (favourites first, other cars folded by category) ----------------
+const openCarGroups = new Set();     // which "Other cars" folds the user opened (kept across re-renders)
+const catLabel = k => ((options && options.categories) || []).find(c => c.key === k)?.label || k;
+const isRacing = k => !!((options && options.categories) || []).find(c => c.key === k && c.racing);
+function splitCars(list) {           // -> {fav: [...], groups: [[category, [...]], ...]} in catalogue order
+  const cats = (options && options.categories) || [];
+  const fav = list.filter(c => c.favourite), groups = [];
+  cats.forEach(cat => {
+    const cs = list.filter(c => !c.favourite && c.category === cat.key);
+    if (cs.length) groups.push([cat.key, cs]);
+  });
+  const known = new Set(cats.map(c => c.key));
+  const rest = list.filter(c => !c.favourite && !known.has(c.category));
+  if (rest.length) groups.push(["other", rest]);
+  return {fav, groups};
+}
+const starBtn = (id, on) => `<button type="button" class="star ${on ? "on" : ""}" title="${on ? "Remove from favourites" : "Add to favourites"}" onclick="event.preventDefault();event.stopPropagation();toggleFav('${esc(id)}',${!on})">${on ? "&#9733;" : "&#9734;"}</button>`;
+const warnMark = c => (c.status === "suspicious" || c.status === "failed") ? `<span class="warnmark" title="${esc(c.status + ": " + (c.reasons || []).join("; "))}">&#9888;</span>` : "";
+const catHead = (k, n) => `<div class="cathead">${esc(catLabel(k))} (${n})${isRacing(k) ? ' <span class="racing">racing</span>' : ""}</div>`;
+function foldHTML(key, n, inner, open) {
+  return `<details class="morecars" data-fold="${key}" ${open || openCarGroups.has(key) ? "open" : ""}><summary>Other cars (${n})</summary>${inner}</details>`;
+}
+function watchFolds(root) {
+  root.querySelectorAll("details.morecars").forEach(d => d.ontoggle = () => { if (d.open) openCarGroups.add(d.dataset.fold); else openCarGroups.delete(d.dataset.fold); });
+}
+function carChecks(el, list) {       // the Plan form: checkboxes, ticked cars stay ticked across re-renders
+  const keep = new Set([...el.querySelectorAll("input:checked")].map(i => i.value));
+  const box = v => `<label><input type="checkbox" value="${esc(v.name)}" ${keep.has(v.name) ? "checked" : ""}>${starBtn(v.name, v.favourite)}${esc(v.title || v.name)}${warnMark(v)}<span class="muted">&nbsp;${v.title && v.title !== v.name ? esc(v.name) : ""}${v.where === "library" ? " (library)" : ""}</span></label>`;
+  const {fav, groups} = splitCars(list);
+  const n = groups.reduce((a, g) => a + g[1].length, 0);
+  el.innerHTML = (fav.length ? `<div class="checks">${fav.map(box).join("")}</div>` : `<div class="hint">No favourites yet - star a car.</div>`)
+    + (n ? foldHTML("plan", n, groups.map(([k, cs]) => catHead(k, cs.length) + `<div class="checks">${cs.map(box).join("")}</div>`).join(""),
+                     groups.some(([k, cs]) => cs.some(c => keep.has(c.name)))) : "");
+  watchFolds(el);
+}
+function carSelect(sel, list) {      // drop-downs: favourites first, then one group per category
+  const cur = sel.value;
+  const {fav, groups} = splitCars(list);
+  const opt = v => `<option value="${esc(v.name)}">${v.favourite ? "\u2605 " : ""}${esc(v.title || v.name)}${v.title && v.title !== v.name ? " - " + esc(v.name) : ""}${v.status === "suspicious" ? " (\u26a0 suspicious)" : ""}</option>`;
+  sel.innerHTML = (fav.length ? `<optgroup label="\u2605 Favourites">${fav.map(opt).join("")}</optgroup>` : "")
+    + groups.map(([k, cs]) => `<optgroup label="Other cars - ${esc(catLabel(k))}">${cs.map(opt).join("")}</optgroup>`).join("");
+  if (cur && list.some(v => v.name === cur)) sel.value = cur;
+}
+async function toggleFav(id, on) {
+  await act("/api/favourite", {car: id, on});
+  await loadOptions();
+  if (ac) await loadAC();
+}
 async function loadOptions() {
   options = await api("/api/options");
-  $("#f_cars").innerHTML = options.vehicles.map(v => `<label><input type="checkbox" value="${esc(v.name)}">${esc(v.name)} <span class="muted">&nbsp;(${v.where})</span></label>`).join("");
+  carChecks($("#f_cars"), options.vehicles);
   $("#f_preset").innerHTML = options.presets.map(p => `<option>${p}</option>`).join("");
   $("#f_init").innerHTML = `<option value="">scratch + copy the rule-based driver first (warm start)</option>` +
     options.checkpoints.map(c => `<option>${esc(c)}</option>`).join("");
   $("#f_lane").innerHTML = Array.from({length: options.lanes}, (_, k) => `<option value="${k}">lane ${k + 1}</option>`).join("") +
     `<option value="${options.lanes}">new lane (runs in parallel)</option>`;
-  const vOpt = options.vehicles.map(v => `<option>${esc(v.name)}</option>`).join("");
-  $("#e_car").innerHTML = vOpt; $("#t_car").innerHTML = vOpt;
+  carSelect($("#e_car"), options.vehicles); carSelect($("#t_car"), options.vehicles);
   $("#e_pol").innerHTML = `<option value="">rule-based driver only</option>` + options.checkpoints.map(c => `<option>${esc(c)}</option>`).join("");
   $("#e_tracks").innerHTML = options.tracks.map(t => `<label><input type="checkbox" value="${esc(t)}" checked>${esc(t)}</label>`).join("");
   $("#t_track").innerHTML = options.tracks.map(t => `<option>${esc(t)}</option>`).join("");
@@ -410,19 +482,34 @@ $("#btnAdd").onclick = async () => {
 // ---------------- import ----------------
 let ac = null;
 async function loadAC() {
-  if (!ac) { ac = await api("/api/ac"); }
-  $("#acroot").innerHTML = ac.root ? `Assetto Corsa found at <code>${esc(ac.root)}</code> - ${ac.cars.length} cars, ${ac.tracks.length} track layouts.`
+  ac = await api("/api/ac");                  // cars fresh every time (imports, favourites); tracks are cached by the server
+  const inst = ac.cars.filter(c => c.installed);
+  $("#acroot").innerHTML = ac.root ? `Assetto Corsa found at <code>${esc(ac.root)}</code> - ${inst.length} cars (${inst.filter(c => c.imported).length} imported, ${inst.filter(c => !c.available).length} not installed), ${ac.tracks.length} track layouts.`
                                    : "Assetto Corsa was not found on this computer.";
   if (!options) await loadOptions();
   drawAC();
 }
+const reloadAC = ms => setTimeout(() => { loadOptions().then(loadAC); }, ms);
 function drawAC() {
-  const have = new Set(options.vehicles.filter(v => v.where === "local").map(v => v.name));
   const haveT = new Set(options.tracks);
   const cq = $("#carq").value.toLowerCase(), tq = $("#trackq").value.toLowerCase();
-  $("#carlist").innerHTML = ac.cars.filter(c => (c.id + " " + c.title).toLowerCase().includes(cq)).map(c =>
-    `<tr><td>${esc(c.title)}<div class="hint">${esc(c.id)}</div></td><td style="text-align:right">${have.has(c.id) ? '<span class="state done">imported</span> ' : ""}
-     <button class="b s" onclick="act('/api/import/car',{car:'${c.id}'}).then(()=>setTimeout(()=>{loadOptions().then(drawAC)},4000))">${have.has(c.id) ? "re-import" : "import"}</button></td></tr>`).join("");
+  const cars = ac.cars.filter(c => c.installed && (c.id + " " + c.title + " " + c.category + " " + catLabel(c.category)).toLowerCase().includes(cq));
+  const row = c => {
+    const why = esc((c.reasons || []).join("; "));
+    const badge = !c.available ? `<span class="state" title="${why}">not installed</span>`
+      : c.status === "failed" ? `<span class="state failed" title="${why}">failed</span>`
+      : c.status === "suspicious" ? `<span class="state warn" title="${why}">suspicious</span>`
+      : c.imported ? '<span class="state done">imported</span>' : "";
+    return `<tr><td>${starBtn(c.id, c.favourite)}${esc(c.title)}<div class="hint">${esc(c.id)}${c.status === "suspicious" || c.status === "failed" ? " - " + why : ""}</div></td>
+     <td style="text-align:right;white-space:nowrap">${badge}
+     ${c.available ? `<button class="b s" onclick="act('/api/import/car',{car:'${esc(c.id)}'}).then(()=>reloadAC(6000))">${c.imported ? "re-import" : "import"}</button>` : ""}</td></tr>`;
+  };
+  const {fav, groups} = splitCars(cars);
+  const n = groups.reduce((a, g) => a + g[1].length, 0);
+  $("#carlist").innerHTML = (fav.length ? `<div class="cathead">&#9733; Favourites (${fav.length})</div><table>${fav.map(row).join("")}</table>` : "")
+    + (n ? foldHTML("import", n, groups.map(([k, cs]) => catHead(k, cs.length) + `<table>${cs.map(row).join("")}</table>`).join(""), cq !== "") : "")
+    + (cars.length ? "" : `<div class="muted" style="padding:8px">No car matches.</div>`);
+  watchFolds($("#carlist"));
   $("#tracklist").innerHTML = ac.tracks.filter(t => t.toLowerCase().includes(tq)).map(t => {
     const stem = t.includes(":") ? t.replace(":", "__") : t;
     return `<tr><td>${esc(t)}</td><td style="text-align:right">${haveT.has(stem) ? '<span class="state done">imported</span> ' : ""}
@@ -430,6 +517,8 @@ function drawAC() {
   }).join("");
 }
 $("#carq").oninput = drawAC; $("#trackq").oninput = drawAC;
+$("#btnImportRacing").onclick = () => act("/api/import/many", {selection: "racing"}).then(() => reloadAC(15000));
+$("#btnImportAll").onclick = () => { if (confirm("Import and check every installed car? A few seconds per car (about 15 minutes for all), in the background - see Tools > Tasks.")) act("/api/import/many", {selection: "all"}).then(() => reloadAC(15000)); };
 
 // ---------------- tools ----------------
 $("#btnEval").onclick = () => act("/api/evaluate", {
@@ -502,7 +591,7 @@ async function loadRun() {
 // LAPS: list, fastest-laps card, replay viewer
 // ======================================================================
 let laps = [];
-const kindLabel = {learned: "learned", reference: "physics reference", "rule-based": "rule-based"};
+const kindLabel = {learned: "learned", reference: "physics reference", "rule-based": "rule-based", benchmark: "real driver"};
 async function loadLaps() { try { laps = await api("/api/laps"); } catch (e) { return; } fillLapFilters(); drawLapList(); drawFastest(); }
 function fillLapFilters() {
   const tracks = [...new Set(laps.map(l => l.track))], cars = [...new Set(laps.map(l => l.car))];
@@ -527,12 +616,14 @@ function drawFastest() {
   laps.forEach(l => { const k = l.track + "|" + l.car; (groups[k] = groups[k] || []).push(l); });
   const rows = Object.values(groups).map(g => {
     const by = k => g.filter(l => l.kind === k).sort((a, b) => a.lap_time - b.lap_time)[0];
-    const L = by("learned"), R = by("reference"), S = by("rule-based");
+    const L = by("learned"), R = by("reference"), S = by("rule-based"), F = by("benchmark");
     const cell = (l, ghost) => l ? `<span style="font-family:var(--mono)">${lap(l.lap_time)}</span> <button class="b s" title="watch" onclick="watchLap('${l.key}'${ghost ? `,'${ghost.key}'` : ""})">&#9654;</button>` : "<span class='muted'>-</span>";
-    return `<tr><td><b>${esc(g[0].track)}</b><div class="hint">${esc(g[0].car)}</div></td><td>${cell(L, R)}${L ? `<div class="hint">${esc(L.driver)}</div>` : ""}</td>
-      <td>${cell(R)}</td><td>${cell(S, L)}</td><td>${L && R ? `<b>+${((L.lap_time / R.lap_time - 1) * 100).toFixed(1)} %</b>` : "-"}</td></tr>`;
+    const pct = (a, b) => `${a.lap_time >= b.lap_time ? "+" : ""}${((a.lap_time / b.lap_time - 1) * 100).toFixed(1)} %`;
+    return `<tr><td><b>${esc(g[0].track)}</b><div class="hint">${esc(g[0].car)}</div></td><td>${cell(L, F || R)}${L ? `<div class="hint">${esc(L.driver)}</div>` : ""}</td>
+      <td>${cell(R)}</td><td>${cell(S, L)}</td><td>${L && R ? `<b>${pct(L, R)}</b>` : "-"}</td>
+      <td>${F ? cell(F) + `<div class="hint">${esc(F.driver)}${L ? " &middot; ours " + pct(L, F) : ""}</div>` : "<span class='muted'>-</span>"}</td></tr>`;
   });
-  $("#fastest").innerHTML = `<table><tr><th>Track</th><th>Best learned driver</th><th>Physics reference (ideal)</th><th>Rule-based driver</th><th>Learned vs ideal</th></tr>${rows.join("")}</table>`;
+  $("#fastest").innerHTML = `<table><tr><th>Track</th><th>Best learned driver</th><th>Physics reference (ideal)</th><th>Rule-based driver</th><th>Learned vs ideal</th><th>Real driver (same car)</th></tr>${rows.join("")}</table>`;
 }
 let viewer = null;
 function getViewer() {
@@ -561,9 +652,10 @@ async function watchLap(key, ghostKey) {
   const l = laps.find(x => x.key === key);
   if (l) { $("#l_track").value = l.track; $("#l_car").value = l.car; }
   const A = await fetchLap(key);
-  if (!ghostKey) {   // default ghost: the physics reference for this car and track, if there is one
-    const ref = laps.filter(x => x.track === A.meta.track && x.car === A.meta.car && x.kind === "reference" && x.key !== key)
-                    .sort((a, b) => a.lap_time - b.lap_time)[0];
+  if (!ghostKey) {   // default ghost: a real driver's lap in this car (F1 benchmark, WP43), else the physics reference
+    const pick = kind => laps.filter(x => x.track === A.meta.track && x.car === A.meta.car && x.kind === kind && x.key !== key)
+                             .sort((a, b) => a.lap_time - b.lap_time)[0];
+    const ref = pick("benchmark") || pick("reference");
     if (ref) ghostKey = ref.key;
   }
   const B = ghostKey ? await fetchLap(ghostKey) : null;

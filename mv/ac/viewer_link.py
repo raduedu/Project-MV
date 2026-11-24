@@ -176,6 +176,14 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
     vp = _vehicle_for(meta)
     if vp is not None and np.any(car["gear"]):
         car["rpm"] = engine_rpm(car["speed"], car["gear"], vp)
+    if vp is not None and "steer" not in lap["samples"]:
+        # a real lap without a steering channel (F1 timing data, WP43): show the steering a car on
+        # that path needs at low slip - wheelbase x path curvature - so the wheels point the right way
+        d1x, d1y = np.gradient(car["x"]), np.gradient(car["y"])
+        d2x, d2y = np.gradient(d1x), np.gradient(d1y)
+        kappa = (d1x * d2y - d1y * d2x) / np.maximum((d1x ** 2 + d1y ** 2) ** 1.5, 1e-6)
+        kappa = np.convolve(kappa, np.ones(9) / 9, "same")
+        car["steer"] = np.clip(np.arctan(vp.chassis.wheelbase_m * kappa) / np.radians(vp.steering.max_wheel_angle_deg), -1, 1)
     model = ghost_model_path(meta)
     label = f"{meta['driver']} | {meta['car']} @ {meta['track']} | {meta['lap_time']:.3f} s"
     if ghost:

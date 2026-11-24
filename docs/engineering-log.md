@@ -1539,3 +1539,295 @@ In training: crashes 15 -> 6 per 100 km.
 **Next steps.** Evaluate `multi_v5_gearbox` with both gearboxes (WP36); if 0.98 turns out worse,
 switch `multi_v6_long` back to 0.93 before it starts. Then evaluate the three runs above the
 same way.
+
+## WP41 — Car catalogue: every Assetto Corsa car, racing cars first, favourites ✅
+
+**Objective (owner, 2026-11-24).** "Train on even all cars in the game, especially racing-style
+cars (Indy, F1, GT3, GT4, GT2). Make the cars we already use favourites and the others still
+options to see." Concretely: import all installed cars robustly, prove each imported car is
+physically plausible (not just "no error"), sort them into categories, keep a small favourites
+list, and show favourites first wherever the control panel asks for a car.
+
+**Approach.**
+1. *Import robustness* (`mv/ac/acd.py`, `mv/ac/car_import.py`). A dry run over all 181 installed
+   cars gave 177 OK, 4 crashes. New `CarNotAvailable` error + `car_has_data()` for empty DLC
+   folders; batch import `mv.vehicle.catalog.import_cars` never stops at a bad car (statuses
+   ok / suspicious / failed / unavailable, results merged into the report after every car).
+   CLI: `scripts\import_ac_car.py --all`, `--category racing|favourites|gt3,gt4...`, `--table`,
+   `--no-sim`, `--threads` (default 2: the GPU trains, stay polite on the CPU).
+2. *Plausibility check* (`catalog.plausibility`). Per car: our peak power, mass and top speed
+   (mv/vehicle/summary.py) against the figures the game advertises in `ui/ui_car.json` "specs"
+   (bhp x 0.7457 = kW; "250+" and ">300" are lower bounds only; "whp" = at the wheels), static
+   tyre grip and brake capacity, plus `sim_check`: three copies of the car in `VehicleSim` for
+   13 s - full throttle 8 s then full braking 5 s (straight and with a little steering), and a
+   100-0 km/h stop - checking 0-100 time, braking distance and that every state stays finite.
+   Bounds (broad on purpose, they catch factor-2 and unit mistakes): power 0.80-1.25 x spec,
+   mass 0.90-1.40 x spec (ours includes driver and default fuel), top speed 0.85-1.20 x spec,
+   0-100 0.55-1.80 x spec, 100-0 in 15-60 m, grip 0.7-2.5 g. Cost ~4-7 s per car on 2 CPU
+   threads. Results in `vehicles/local/_catalog.json` (git-ignored: names/specs are game data).
+3. *Categories* (`mv/vehicle/catalog.py`). A data table of rules (tags, class "race"/"street",
+   name keywords), first match wins: drift -> prototype (lmp*, "prototype C") -> formula
+   (singleseater, formula, open-wheeler, indy) -> GT3/GT2-GTE-GT1/GT4 by tag (race cars only)
+   -> touring/cup by tag or name -> GT by name -> vintage -> any other race car = touring_cup
+   -> road. Flags: tuned (game "Step/Stage" variants), vintage, rally, track-only, override.
+   Override table for 6 AC cars the rules get wrong (Huracan ST = one-make, KTM X-Bow R = road,
+   McLaren F1 GTR = GT1, P1 GTR = track-only, the two empty DLC folders) and our 4 library files.
+   Racing = formula, prototype, gt3, gt2_gte, gt4, touring_cup.
+4. *Favourites*: `vehicles/favourites.yaml` (committed, ids only, comment header). API:
+   `load_favourites / save_favourites / set_favourite / favourites()`, `list_cars()`,
+   `racing_cars()`, `select_ids()`, `table()`.
+5. *Control panel* (`scripts/webui.py`, `mv/ui/index.html`, still stdlib only). Plan form,
+   Tools (evaluate / vehicle check / reference lap) and the Import tab show favourites first
+   (star), then "Other cars (N)" folded, grouped by category with a "racing" marker; drop-downs
+   use option groups. The star toggles a favourite (`POST /api/favourite`, rewrites the file).
+   Suspicious/failed cars carry a warning sign with the reason. Import tab: "Import all racing
+   cars" and "Import all cars" (`POST /api/import/many`, a background task running
+   `import_ac_car.py --category ...`). Phone layout (< 640 px) kept: badge above the button,
+   long ids wrap.
+
+**Verification (measured).**
+- Tests: new `tests/test_catalog.py`, 28 tests (17 classification cases on synthetic
+  ui_car data, spec parsing, lenient ui_car.json reading, parse_lut typo regression,
+  favourites round trip, committed favourites file holds ids only, batch import with an empty
+  DLC folder + a broken car + a missing folder + a synthetic GT3 written in AC's file format,
+  plausibility flags, turbo controllers, KERS; one test needs the game and is skipped without
+  it). Whole suite: **169 passed** (4 min 9 s, while training ran).
+- The four cars already in `vehicles/local` before this work (911 GT3 RS, 918, SF70H, 911 GT3
+  Cup) re-imported byte-identical after the parse_lut fix (the turbo-controller fix then changed
+  the SF70H, see below; the three training cars are unchanged).
+- Full import of all installed cars (final run, CPU, 2 threads): 181 game folders + 4 library files
+  -> **177 ok, 6 suspicious, 0 failed, 2 not installed** (the two empty DLC folders); 179 files in
+  `vehicles/local`; ~4-8 s per car (~20 min in all, CPU, while both training lanes ran).
+  Categories: formula 16, prototype 9, gt3 13 (1 not installed), gt2_gte 8, gt4 6, touring_cup 19
+  (1 not installed) = **71 racing cars, 69 usable**; road 80, vintage 29, drift 5. The 10
+  favourites are all "ok" (911 GT3 RS, 918, Taycan, FS EV, SF70H, 911 GT3 R, AMG GT3, 911 RSR,
+  Cayman GT4 Clubsport, 919 Hybrid 2016). Simulator run: all 183 usable cars stayed finite.
+- Browser (panel restarted with `webui.py stop` / `start --no-browser`, training untouched):
+  Plan form shows the 10 favourites starred, "Other cars (N)" folded with category groups;
+  starring/unstarring Lotus 25 wrote and restored `vehicles/favourites.yaml`; Tools drop-downs
+  have "★ Favourites" then one option group per category; Import tab at 375 x 812: page width
+  375 px (no sideways scroll), car list fits its card; no console errors; bad
+  selection / unknown car rejected by the server (`unknown selection`, `unknown car`).
+
+**Problems & resolutions.**
+1. *Cayman GT4 (road) and Praga R1 crashed with IndexError.* Root cause: `parse_lut` appended
+   x before reading y; a typo in Kunos' wing tables (`8|0.0.91`, `8|0.0.73` - two decimal
+   points) made `float(y)` fail after x was stored, so x had one more entry than y and the sort
+   indexed past the end. Fix: keep a row only when both numbers are read, and read numbers like
+   the game (C `strtod`: leading number, `0.0.91` -> 0.0) so our car matches what AC uses. Both
+   values sit at 8° wing angle, beyond the cars' set angle, so the aero result is unaffected.
+2. *Ferrari 488 Challenge Evo and 488 GT3 2020: "no data folder or data.acd".* Root cause: the
+   folders are empty (DLC not owned; Steam creates the folders). Now reported as "not installed"
+   and skipped.
+3. *"Imported without error" was not "right" - found by the plausibility check:*
+   a) Ferrari 488 GTB had 1406 kW instead of ~490. Root cause: AC's boost controllers
+      (`ctrl_turbo<i>.ini`) were ignored. The 488 GTB has ten turbo entries with WASTEGATE 0.69,
+      of which the controllers enable two per gear; summing all ten multiplied torque by 7.9.
+      Eleven installed cars use such controllers (488 GT3, 488 GTB, SF15-T, SF70H, RX-7 Spirit R,
+      650S GT3, 919 Hybrid 2016, 962C short tail, 991 Turbo S, Supra MkIV, MP4-12C GT3). Fix:
+      `_turbo_controller_limit` evaluates the controller (ADD/MULT, inline `(|x=y|)` tables,
+      RPMS/GEAR/GAS inputs; sliding inputs at 0) and uses it in place of WASTEGATE, in the top
+      gear (our engine has one curve for all gears; low-gear overboost / torque management is not
+      modelled - noted in the car file). 488 GTB now 423 kW (spec 492, -14 %); RX-7 284 -> 199 kW
+      (spec 206); SF70H 868 -> 641 kW (the controller lowers boost above 9000 rpm, AC's way of
+      modelling the F1 fuel-flow limit).
+   b) First version of that fix halved the 991 Turbo S boost (270 kW vs 433). Root cause: each
+      controller section's UP_LIMIT (0.7) was applied to the table value; the pedal and gear
+      sections multiply by 1.0, which the clamp cut to 0.7 (0.605 x 0.7 x 0.7). The limits bound
+      the running result. After the fix: 375 kW (-13 %).
+   c) LaFerrari 522 kW vs 718. Root cause: its hybrid uses the older `kers.ini` (not `ers.ini`),
+      which was ignored; same for the F138. Now a motor on the engine side with the KERS torque
+      curve, store sized so a full discharge lasts DISCHARGE_TIME (placeholder regen limit).
+      LaFerrari 650 kW (-9 %), F138 568 kW (spec 569).
+   d) Slow cars were flagged for not reaching 100 km/h in 8 s (Citroen C4 mod: 96 km/h; a 1960s
+      Abarth 595 needs 26 s per the game). Now flagged only if the game's 0-100 figure is under
+      8 s, or there is no figure and the car has more than 100 W/kg.
+4. *Systematic finding, not changed:* our peak power is typically ~10-15 % below the game's
+   advertised figure (911 GT3 RS 325 vs 373 kW, 488 GT3 317 vs 373, MP4-12C GT3 317 vs 373),
+   median ratio 0.869 (quartiles 0.849-0.895, 167 cars with a figure). AC's `power.lut` is generally understood to be torque at the
+   wheels (after drivetrain losses), and our simulator applies a gearbox efficiency on top - so
+   the driveline loss may be counted twice. Needs a decision (it would change the trained cars).
+5. *ui_car.json is not clean JSON everywhere* (Windows-1252 "™" in the McLaren P1 names, raw
+   control characters). Read leniently (utf-8 -> cp1252 -> latin-1, `strict=False`).
+
+**Remaining suspicious cars (usable, reason recorded).** 
+| Car | Category | Reason | Assessment |
+|---|---|---|---|
+| lotus_98t | formula | mass 759 kg vs 523 kg (+45 %) | game default fuel is 195 l (+144 kg) on top of 615 kg incl. driver - data, not a bug |
+| ks_maserati_250f_6cyl | formula | power 147 kW vs 201 kW (-27 %) | the game's own power.lut peaks at 147 kW - data |
+| ks_mercedes_c9 | prototype | top speed 320 km/h vs >= 380 | gear-limited by the default (short) gearing; drag-limited would be ~428 km/h |
+| ks_alfa_romeo_155_v6 | touring_cup | power 248 kW vs 313 kW (-21 %) | power.lut peaks at 248 kW - data (just outside the band) |
+| ks_nissan_gtr | road | 0-100 km/h 3.9 s vs 2.1 s (+87 %) | the game's figure is optimistic (real car ~2.7 s); our launch has no launch control |
+| ks_lamborghini_miura_sv | vintage | power 221 vs 287 kW (-23 %); brakes 0.71 g | 1960s car: weak brakes are real-ish; flagged for a look |
+
+
+**No IndyCar** is installed (no car tagged or named Indy/IndyCar/Dallara); the rules would put
+one in "formula" if added.
+
+**Next steps.**
+- Decide on the driveline-loss question (problem 4) with a sysid run in the game on one car.
+- Gear-dependent boost (overboost/torque limits per gear) needs a per-gear torque curve in the
+  simulator; until then the top-gear curve is used.
+- Mercedes C9 is gear-limited at 320 km/h with the game's default (short) gearing; Lotus 98T
+  carries 195 l of fuel by default (+144 kg). Consider `--fuel` for training imports.
+- Multi-car training on the racing set: start with the favourites (all pass the check).
+
+**Used by training (WP42/WP45).** `train.py --vehicle` now takes catalogue groups:
+`@favourites,@racing,-fs_generic_ev` = 64 training cars + held-out cars; groups take only cars
+whose check is "ok" (a suspicious car must be named explicitly). Held-out cars are removed from
+the training list automatically.
+
+## WP42 — All real circuits, and training on them with a held-out set ✅
+
+**Objective (owner, 2026-11-24).** "You could also use all tracks at any time, just like the cars."
+
+**Approach.**
+* Imported every closed circuit of the game: 28 more layouts (33 in all, `tracks/local`, git-ignored):
+  Barcelona GP/moto, Black Cat County x3, Brands Hatch GP/Indy, Highlands x3, Laguna Seca, Monza 1966
+  road/junior/full, Nordschleife and its endurance layout (20.8 / 25.3 km), Nurburgring GP/sprint,
+  Red Bull Ring national, Silverstone GP/international/national and 1967, Vallelunga x3, Zandvoort,
+  Magione. Not imported: drag strips, the drift layouts, Trento-Bondone (a hill climb, not a loop).
+* Geometry check of every circuit (self-clearance, curvature, width): **2 skipped** - Monza 1966
+  full (oval + road course: the lap crosses itself on a bridge; our circuits cannot), Silverstone
+  international (edges imported wrongly: width up to 103 m, a 1 m corner radius).
+* `tracks/sets.yaml` (committed, names only; `mv/track/sets.py`): `validation` = Imola, Red Bull
+  Ring, Monza, Mugello, Spa + Barcelona, Silverstone, Zandvoort (three F1 benchmark circuits, WP43)
+  + Laguna Seca, Brands Hatch; `never_train` = **Mugello, Laguna Seca, Brands Hatch** - never in
+  training, so "a real circuit it has never seen" stays measured; `skip` = the two above.
+* `train.py --real-tracks all|names` adds the remaining 28 circuits to the training pool, repeated
+  to make up `--real-share` of it (default 25 %); they are never replaced by the circuit refresh.
+  Asking for a held-out circuit is an error, not silently dropped. Validation uses the sets file
+  (previously every imported circuit - with 33 that would have included the 25 km Nordschleife).
+
+**Verification.** `test_track_sets_hold_circuits_out_of_training`; smoke runs on the CPU:
+28 real + 16 generated circuits in one pool; a 64-car run (WP41 groups) from `multi_v5_zigzag`:
+the held-out public-data 992 GT3 RS completed **10/10 real validation circuits** including the
+never-trained Laguna Seca (1:38.3) and Brands Hatch (1:39.5).
+
+**Consequence.** Validation now has 10 real circuits instead of 5: "x/11" numbers of runs from
+WP42 on are not comparable with "x/11" before (that was 6 random + 5 real).
+
+## WP43 — Max Verstappen as the benchmark, in equal machinery 🕓 (data and cars ready; training queued)
+
+**Objective (owner, 2026-11-24).** "Find Max Verstappen data we can use - ideally open source; do
+reinforcement learning on it; for that we would need to go against him in equal machinery. He is
+the benchmark." With yesterday's concerns (D-031) taken into account: no steering in public data,
+F1 style does not carry over to a 911, rights.
+
+**Data found.** OpenF1 (https://openf1.org): free historical F1 live-timing data from 2023, no
+account. Per car ~3.7 samples/s: speed, rpm, gear, throttle %, brake on/off, DRS; position x, y,
+z in decimetres. No steering, tyre or brake-pressure data. **Rights:** the OpenF1 software is
+open source, but the data is Formula 1's and no licence for it is granted (FastF1 and OpenF1 both
+describe themselves as unofficial); there is no openly licensed Verstappen telemetry. GT3: none
+public. -> Used like the Assetto Corsa data: cached locally (`.cache/openf1`), lap files in
+`runs/laps`, never committed or published (D-038). The repository contains only code and
+circuit *names*.
+
+**How his lap becomes ours (`mv/benchmark/openf1.py`).**
+1. His fastest qualifying lap per circuit (`tracks/f1_circuits.yaml`: 2023 RB19 at Austria, Spa,
+   Monza, Silverstone, Zandvoort, Barcelona; 2024 RB20 at Imola - no 2023 race there).
+2. *Alignment* of F1's map to the game's circuit: rotation search + iterative closest point with
+   the scale held within +-5 % (left free, the fit "succeeded" by shrinking his whole lap onto one
+   point - scale 0.0, first attempt), then a 3-D -> 2-D linear refinement using his height: F1's
+   frame is slightly tilted, which squeezed hilly circuits by ~2 % (Spa: 95 % of samples within
+   24 m before, **5.2 m** after).
+3. F1's timing line is up to **181 m** from the game's start line (Imola; Silverstone 104 m,
+   Austria 90 m). First fits compared his corners with the wrong places (Imola fit error 53 km/h).
+   His (flying) lap is now re-cut at our line - lap time unchanged - after which his speed trace
+   and our physics trace line up within 10-25 m (correlation 0.96-0.98).
+4. Stretches where his path is > 12 m from our circuit = layouts differ; they are left out:
+   Barcelona's last sector (F1 removed the chicane in 2023; the game has it - **not comparable**),
+   Zandvoort turn 3 (re-profiled 2020), two corners at Austria.
+
+**Equal machinery (`mv/benchmark/car_fit.py`, `scripts/f1_benchmark.py`).** Template: the game's
+Ferrari SF70H (2017 F1 car) at 805 kg (2023 minimum 798 kg, FIA F1 Technical Regulations art.
+4.1, + qualifying fuel). Four factors - power, drag area, downforce area, tyre grip - fitted per
+circuit (each weekend has its own aero package) so our physics reproduces his **corner minimum
+speeds, straight-end speeds and speeds one/two thirds down each straight**: the places where a
+qualifying driver is at the car's limit; braking and throttle transitions are left free.
+Least squares on log-factors, 13 random starts. The first version matched only apexes and
+straight ends: power and drag were then interchangeable (Monza: x0.52 power with x0.46 drag fitted
+as well) - the mid-straight speeds fix the acceleration.
+
+| Circuit | His lap (s) | Alignment median / 95 % | Left out (m) | Power / drag / downforce / grip | Fit error (km/h rms) | Points | Physics-perfect lap of that car (s) | Perfect lap faster by |
+|---|---|---|---|---|---|---|---|---|
+| Spielberg 2023 | 64.391 | 1.1 / 11.5 m | 342 | 0.81 / 0.53 / 1.70 / 1.13 | 8.2 | 5+6+12 | 63.696 | +1.08 % |
+| Silverstone 2023 | 86.720 | 2.5 / 7.8 m | 0 | 0.88 / 0.69 / 2.44 / 0.89 | 8.6 | 8+8+12 | 83.654 | +3.54 % |
+| Zandvoort 2023 | 70.567 | 1.8 / 7.5 m | 182 | 0.67 / 0.40 / 2.50 / 1.05 | 9.5 | 5+6+9 | 66.228 | +6.15 % |
+| Monza 2023 | 80.307 | 1.6 / 4.5 m | 0 | 0.76 / 0.49 / 1.27 / 1.29 | 6.1 | 6+6+12 | 77.687 | +3.26 % |
+| Spa 2023 | 106.168 | 1.5 / 5.2 m | 0 | 0.91 / 0.72 / 1.51 / 1.06 | 9.8 | 8+8+16 | 101.624 | +4.28 % |
+| Imola 2024 | 74.746 | 1.4 / 4.2 m | 0 | 0.67 / 0.40 / 1.63 / 1.19 | 5.6 | 8+8+14 | 71.886 | +3.83 % |
+| Barcelona 2023 (layout differs) | 72.272 | 1.6 / 16.4 m | 479 | 1.24 / 1.03 / 0.40 / 1.63 | 20.2 | 5+5+10 | 72.862 | -0.82 % |
+
+*Factors relative to the SF70H file (641 kW, CdA 1.60 m^2). Points = apexes + straight ends +
+mid-straight points. The physics-perfect lap uses the minimum-time line (scripts/reference_lap.py).*
+
+**Reading the result honestly.**
+* The fitted cars reproduce his speeds to 6-10 km/h rms; the physics-perfect lap of each is 1-6 %
+  faster than his real lap (median 3.7 %). That margin is partly him (transitions), partly our
+  physics (quasi-steady, flat circuits - no banking at Zandvoort, no crests and compressions at Spa
+  or Austria, no DRS, no tyre temperature) - the two cannot be separated with this data.
+* The individual factors are **not** trustworthy as component values: fitted power is
+  430-585 kW, below a real 2023 F1 power unit (~750 kW+). Drag and power still trade off, DRS is
+  open on qualifying straights and our car has no DRS, and the importer question of WP41
+  (driveline losses perhaps counted twice) also enters. What is matched is the car's
+  *performance envelope as he used it*, not its parts.
+* So "equal machinery" here = a car that, in our physics, can do what his car did at the points
+  where he was at the limit. Beating his lap time in that car is a meaningful milestone; the
+  comparison carries roughly +-2 % uncertainty.
+
+**Zero-shot test.** Today's best driver (`multi_v5_zigzag/best`, never trained on anything like
+an F1 car) in these cars: crashes on every circuit within 350-1 730 m. It has to learn F1 levels of
+downforce and power first -> training run `f1_ver_v1` (WP45).
+
+**In the control panel.** His laps are lap files of kind "benchmark" (car = the fitted car of that
+weekend); the Fastest-laps table has a "Real driver (same car)" column; a lap in such a car gets
+his lap as the default ghost (sector table: Spa S1 +0.64 s, S2 +1.70 s, S3 +2.21 s vs the
+physics-perfect lap). No steering channel: the viewer says "not recorded"; in Assetto Corsa the
+wheels are pointed from the path's curvature (`viewer_link`) and the SF70H model is shown.
+
+**Verification.** `tests/test_benchmark.py`: alignment recovers a rotated, decimetre-scaled,
+optionally mirrored lap (median < 2.5 m with 2 m of deliberate weave); a lap whose timing line is
+180 m from ours is re-cut at our line with the same lap time and the right speed at each distance.
+Python's certificate store rejected the API ("certificate has expired" on an old cross-signed
+root) while Windows accepted it; the fetch falls back to Windows' own `curl.exe` (still verified),
+never to an unverified connection.
+
+## WP44 — Why the distilled networks fail, and the fix: copy the critic too 🕓 (fix unit-tested; training run queued)
+
+**Observation.** `multi_v6_mid` (768-512-256, distilled from `multi_v5_zigzag/best`, KL stop 2,
+WP40) failed like the 1.7 M network: validation 82 % at update 1 -> **0 %** from update 90;
+crashes 10 -> **230 per 100 km**; pace 147 -> 171 km/h - it simply drove faster and crashed. Its
+update sizes were normal (KL 0.012-0.020, target 0.012), so WP30's explanation (too-large steps)
+was wrong or at least not sufficient. Stopped after 0.66 h (killed only that training process;
+the plan marked it failed and started the next job).
+
+**Root cause (most likely).** In a teacher warm start only the *actor* was copied. The student's
+*critic* (its estimate of future reward, which PPO uses to judge every action) started from
+nothing and got 40 critic-only updates (~20 M decisions), and the teacher's return scaling was
+not copied either. Runs that continue a driver with `--init-from` inherit a critic trained on
+billions of decisions. A critic that has not learnt "this speed into this corner ends in a crash"
+values speed only - and PPO follows it. Both distilled runs show exactly that signature (pace up,
+crashes up), at normal and at large step sizes.
+
+**Fix.** `warm_start` copies the critic as well when the teacher has one (`value(obs)`), in the
+same buffered mini-batches as the actor, and `train.py --teacher` also copies the teacher's
+return scaling (`ret_norm`). Test `test_distillation_also_copies_the_critic`: critic error vs the
+teacher < 30 % of the uncopied one. **Not yet proven on a real run** -> `multi_v6_mid2` (WP45)
+repeats `multi_v6_mid` with the fix.
+
+## WP45 — Plan for the next ~14 h (2026-11-24 14:30)
+
+* Lane 1: `multi_v5_gearbox` (running, 1.9/3 h) -> **`multi_v7_racing`** (replaces the not-yet-started
+  `multi_v6_long`): continues `multi_v5_zigzag/best` with **64 racing cars** (`@favourites,@racing`),
+  car variation, held out: public 992 GT3 RS and 918, Ferrari SF15-T (F1), Audi R8 LMS 2016 (GT3),
+  Maserati GT4; **28 real circuits** (30 % of the pool) + complex/GP generated circuits; zig-zag 5,
+  gearbox 0.98, 11 h.
+* Lane 2: `fs_v3_zigzag` (running) -> **`f1_ver_v1`**: the six comparable fitted F1 cars (Barcelona
+  left out), from `multi_v5_zigzag/best`, real circuits 40 % of the pool, 7 h; judged with
+  `scripts/f1_benchmark.py --race runs/f1_ver_v1/best.pt` -> **`multi_v6_mid2`**: the WP44 fix, 5 h.
+
+**Next steps.** Evaluate `multi_v5_gearbox` with both gearboxes (WP36) when done; race `f1_ver_v1`
+against his laps; check `multi_v6_mid2` does not collapse; owner decision on the driveline-loss
+question (WP41) - ideally one recorded lap in the game with `ac_drive.py --record` for a
+system-identification check; Indy car only if the owner installs one (none in the game).

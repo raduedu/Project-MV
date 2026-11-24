@@ -47,19 +47,45 @@ def parse_ini(text: str) -> dict[str, dict[str, str]]:
     return out
 
 
+# A number at the start of a text, the way C's ``strtod`` reads it: optional
+# sign, digits with at most one decimal point, optional exponent.
+_LEADING_NUMBER = re.compile(r"\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _leading_float(text: str) -> float | None:
+    """Read the number at the start of ``text`` and ignore whatever follows.
+
+    Why: Kunos' files contain the odd typo, e.g. ``8|0.0.91`` (two decimal
+    points) in the Cayman GT4's and the Praga R1's wing tables.  Python's
+    ``float()`` rejects that; the game (written in C++) reads numbers like C's
+    ``strtod``, which stops at the first character that cannot continue the
+    number, so it sees ``0.0``.  Reading it the same way keeps our car identical
+    to the game's.  Returns None when the text does not start with a number.
+    """
+    m = _LEADING_NUMBER.match(text)
+    return float(m.group(0)) if m else None
+
+
 def parse_lut(text: str) -> tuple[np.ndarray, np.ndarray]:
-    """Parse a ``x|y`` lookup table into two sorted arrays."""
+    """Parse a ``x|y`` lookup table into two sorted arrays.
+
+    A row is kept only when *both* of its numbers can be read, so x and y always
+    stay paired.  (The first version appended x before reading y; one bad y then
+    left x one entry longer than y, and sorting crashed with an IndexError -
+    engineering log, car catalogue work package.)
+    """
     xs, ys = [], []
     for line in text.splitlines():
         line = re.split(r"[;]|//", line, maxsplit=1)[0].strip()
         if "|" not in line:
             continue
         a, b = line.split("|")[:2]
-        try:
-            xs.append(float(a)); ys.append(float(b))
-        except ValueError:
+        x, y = _leading_float(a), _leading_float(b)
+        if x is None or y is None:
             continue
-    order = np.argsort(xs)
+        xs.append(x)
+        ys.append(y)
+    order = np.argsort(xs, kind="stable")
     return np.asarray(xs, float)[order], np.asarray(ys, float)[order]
 
 
@@ -76,9 +102,18 @@ def _vec(sec: dict[str, str], key: str) -> list[float]:
 
 
 def _lut(files: dict[str, str], name: str | None) -> tuple[np.ndarray, np.ndarray] | None:
+    """A lookup table named in an ini file: a file name, or written inline.
+
+    Inline form (used by AC's controllers): ``(|0=0|1000=0.5|7000=1.3|)`` -
+    pairs ``x=y`` separated by ``|``.
+    """
     if not name:
         return None
-    t = files.get(name.strip().lower())
+    name = name.strip()
+    if name.startswith("("):
+        rows = [p.replace("=", "|", 1) for p in name.strip("()").split("|") if "=" in p]
+        return parse_lut("\n".join(rows)) if rows else None
+    t = files.get(name.lower())
     return parse_lut(t) if t else None
 
 
@@ -166,11 +201,15 @@ def _aero(files: dict[str, str], a: float, b: float, ref_speed_kmh: float = 180.
     return Aero(cda_m2=cda, cla_front_m2=cla_f, cla_rear_m2=cla_r)
 
 
-def _engine_curve(files: dict[str, str], eng: dict[str, dict[str, str]]) -> tuple[list[float], list[float], float]:
+def _engine_curve(files: dict[str, str], eng: dict[str, dict[str, str]],
+                  n_gears: int = 1) -> tuple[list[float], list[float], float]:
     """Full-throttle torque curve including steady-state turbo boost.
 
     AC: torque = power.lut(rpm) * (1 + boost), with each turbo producing
     boost = min(MAX_BOOST * (rpm/REFERENCE_RPM)^GAMMA, WASTEGATE).
+    If the car has a boost controller for a turbo (``ctrl_turbo<i>.ini``), the
+    controller's limit takes the place of WASTEGATE (see
+    :func:`_turbo_controller_limit`).
     """
     rpm, tq = parse_lut(files[eng["HEADER"].get("POWER_CURVE", "power.lut").lower()])
     limiter = _f(eng["ENGINE_DATA"], "LIMITER", float(rpm.max()))
@@ -183,10 +222,57 @@ def _engine_curve(files: dict[str, str], eng: dict[str, dict[str, str]]) -> tupl
         if name.startswith("TURBO_"):
             ref = max(_f(sec, "REFERENCE_RPM", 3000.0), 1.0)
             b = _f(sec, "MAX_BOOST", 0.0) * np.minimum(1.0, grid / ref) ** _f(sec, "GAMMA", 1.0)
-            wg = _f(sec, "WASTEGATE", 0.0)
-            boost += np.minimum(b, wg) if wg > 0 else b
+            ctrl = _turbo_controller_limit(files, int(name.split("_")[1]), grid, n_gears)
+            if ctrl is not None:
+                # a boost controller replaces the fixed wastegate (log: car catalogue WP)
+                boost += np.minimum(b, np.maximum(ctrl, 0.0))
+            else:
+                wg = _f(sec, "WASTEGATE", 0.0)
+                boost += np.minimum(b, wg) if wg > 0 else b
     torque = torque * (1.0 + boost)
     return grid.tolist(), torque.tolist(), limiter
+
+
+def _turbo_controller_limit(files: dict[str, str], index: int, rpm: np.ndarray, n_gears: int) -> np.ndarray | None:
+    """Boost limit of turbo ``index`` set by its controller file ``ctrl_turbo<index>.ini``, or None.
+
+    Why: some cars (e.g. the Ferrari 488 GTB, SF70H, Porsche 919, 991 Turbo S)
+    do not use the turbo's fixed WASTEGATE; a controller sets the allowed boost
+    from engine speed, gear and pedal.  The 488 GTB has ten "turbos" with a
+    wastegate of 0.69 each, of which a controller enables only the two that
+    belong to the current gear - ignoring the controllers summed all ten and
+    gave the car 1400 kW instead of ~490 kW.
+
+    AC combines a controller file's sections top to bottom, starting from 0:
+    ``COMBINATOR=ADD`` adds the section's table value, ``MULT`` multiplies by
+    it; the running result is then clamped to the section's ``[DOWN_LIMIT, UP_LIMIT]``.  Inputs: engine
+    speed (RPMS), gear (GEAR: 1 = first), pedal (GAS: full throttle = 1).
+    Inputs that describe sliding (slip angles, oversteer ...) are taken at
+    their straight-line value 0.  Our engine model has one full-throttle curve
+    for all gears, so we use the TOP gear's limit - the car's normal full
+    power; extra boost allowed only in low gears (overboost) or boost held
+    back in low gears (traction management) is not modelled.
+    """
+    text = files.get(f"ctrl_turbo{index}.ini")
+    if not text:
+        return None
+    sections = [s for k, s in parse_ini(text).items() if k.startswith("CONTROLLER_")]
+    if not sections:
+        return None
+    gear = float(max(n_gears, 1))
+    value = np.zeros_like(rpm)
+    for sec in sections:
+        lut = _lut(files, sec.get("LUT"))
+        if lut is None:
+            continue
+        kind = sec.get("INPUT", "").strip().upper()
+        x = rpm if kind == "RPMS" else np.full_like(rpm, {"GEAR": gear, "GAS": 1.0}.get(kind, 0.0))
+        v = np.interp(x, *lut)
+        value = value * v if sec.get("COMBINATOR", "ADD").strip().upper() == "MULT" else value + v
+        # the limits bound the running result, not the table value: the 991 Turbo S multiplies by a
+        # pedal factor of 1.0 with UP_LIMIT=0.7 - clamping the factor would cut its boost in half
+        value = np.clip(value, _f(sec, "DOWN_LIMIT", -1e9), _f(sec, "UP_LIMIT", 1e9))
+    return value
 
 
 def import_ac_car(car_dir: str | Path, fuel_litres: float | None = None) -> VehicleParams:
@@ -242,8 +328,11 @@ def import_ac_car(car_dir: str | Path, fuel_litres: float | None = None) -> Vehi
     steering = Steering(max_wheel_angle_deg=lock / abs(ratio), steering_ratio=abs(ratio), lock_deg=lock)
 
     # ---- combustion engine + gearbox -------------------------------------
-    rpm, torque, limiter = _engine_curve(files, eng)
     n_gears = int(_f(drv["GEARS"], "COUNT"))
+    rpm, torque, limiter = _engine_curve(files, eng, n_gears)
+    if any(k.startswith("ctrl_turbo") for k in files):
+        notes.append("turbo boost from the boost controllers (ctrl_turbo*.ini) in top gear; "
+                     "gear-dependent overboost/torque limits not modelled")
     ratios = [_f(drv["GEARS"], f"GEAR_{i}") for i in range(1, n_gears + 1)]
     auto = drv.get("AUTO_SHIFTER", {})
     gb = drv.get("GEARBOX", {})
@@ -305,6 +394,33 @@ def import_ac_car(car_dir: str | Path, fuel_litres: float | None = None) -> Vehi
                               max_regen_kw=round(0.6 * peak_kw, 1), soc_init=0.9, soc_min=0.1)
             notes.append("ESTIMATE: battery capacity/limits are placeholders (AC's ERS model has no "
                          "direct equivalent); edit the YAML with real values for the car")
+    elif "kers.ini" in files:
+        # Older hybrid system (kers.ini, e.g. LaFerrari, F138): one motor with a torque curve.
+        # Ignoring it cost the LaFerrari ~120 kW (log: car catalogue WP).
+        kers = parse_ini(files["kers.ini"]).get("KERS", {})
+        kc = _lut(files, kers.get("TORQUE_CURVE"))
+        if kc is not None and kc[1].max() > 0:
+            m = kc[0] >= 0
+            r, t = kc[0][m], kc[1][m]
+            top = float(r[t > 0].max())
+            keep = r <= top
+            on_wheels = kers.get("ATTACH", "ENGINE").strip().upper() == "WHEELS"
+            gb_name = "kers_direct" if on_wheels else "main"      # WHEELS: curve is vs wheel rpm
+            if on_wheels:
+                gearboxes["kers_direct"] = Gearbox(ratios=[1.0], final_drive=1.0)
+            units.append(PowerUnit(name="motor_kers", kind="motor", gearbox=gb_name, front_frac=ice_front,
+                                   rpm=r[keep].tolist(), torque_nm=t[keep].tolist(),
+                                   rpm_max=min(top * 1.02, 1e5), efficiency=0.92))
+            peak_kw = float((t * r * RPM_TO_RADS).max()) / 1000.0
+            # DISCHARGE_TIME = how long a full store lasts at full power; our battery runs
+            # from soc_init 0.9 down to soc_min 0.1, i.e. 80 % of its capacity.
+            discharge_s = _f(kers, "DISCHARGE_TIME", 30000.0) / 1000.0
+            ptype = "hybrid"
+            battery = Battery(capacity_kwh=round(peak_kw * discharge_s / 3600.0 / 0.8, 3),
+                              max_discharge_kw=round(peak_kw, 1), max_regen_kw=round(0.6 * peak_kw, 1),
+                              soc_init=0.9, soc_min=0.1)
+            notes.append("KERS (kers.ini): motor on the engine side, store sized from DISCHARGE_TIME; "
+                         "ESTIMATE: regen limit is a placeholder; AC's KERS controller (gear/pedal) not modelled")
 
     electronics = Electronics(
         traction_control=int(_f(elec.get("TRACTION_CONTROL", {}), "PRESENT", 0)) == 1,

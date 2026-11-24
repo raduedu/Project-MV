@@ -102,6 +102,9 @@
   function prep(lp) {
     const s = lp.samples; let m = 0;
     s.sm = s.s.map(v => (m = Math.max(m, v)));               // distance, never decreasing
+    lp.noSteer = !s.steer;                                     // real laps (e.g. F1 timing data) have no steering channel
+    if (!s.steer) s.steer = s.t.map(() => 0);
+    if (!s.gear) s.gear = s.t.map(() => 0);
     return lp;
   }
   function at(lp, t) {                                         // state at time t (linear interpolation)
@@ -254,11 +257,13 @@
       const sp = [{x: sA.sm, y: sA.speed.map(v => v * 3.6), color: red}];
       if (B) sp.unshift({x: B.samples.sm, y: B.samples.speed.map(v => v * 3.6), color: grey, w: 1.4});
       base.speed = chart(el.speedChart, sp, v => v.toFixed(0));
-      const st = [{x: sA.sm, y: sA.steer, color: red, w: 1.4}];
-      if (B) st.unshift({x: B.samples.sm, y: B.samples.steer, color: grey, w: 1.4});
-      base.steer = chart(el.steerChart, st, v => v.toFixed(2), true);
+      const st = A.noSteer ? [] : [{x: sA.sm, y: sA.steer, color: red, w: 1.4}];
+      if (B && !B.noSteer) st.unshift({x: B.samples.sm, y: B.samples.steer, color: grey, w: 1.4});
+      base.steer = st.length ? chart(el.steerChart, st, v => v.toFixed(2), true) : null;
+      el.steerChart.style.display = st.length ? "" : "none";
       const act = l => { const s = l.samples.steer; let a = 0; for (let i = 1; i < s.length; i++) a += Math.abs(s[i] - s[i - 1]); return a / l.meta.lap_time; };
-      el.steerNote.textContent = `steering activity ${act(A).toFixed(2)} lock/s` + (B ? ` (ghost ${act(B).toFixed(2)})` : "") + " - lower = calmer hands";
+      const actTxt = l => l.noSteer ? "not recorded" : `${act(l).toFixed(2)} lock/s`;
+      el.steerNote.textContent = `steering activity ${actTxt(A)}` + (B ? ` (ghost ${actTxt(B)})` : "") + " - lower = calmer hands";
       base.gap = B ? chart(el.gapChart, [{x: sA.sm, y: deltaA, color: "#ffd447"}], v => (v > 0 ? "+" : "") + v.toFixed(1), true) : null;
       el.gapChart.style.display = el.gapTitle.style.display = B ? "" : "none";
       el.legend.innerHTML = `<span><i style="background:${red}"></i>${esc(A.meta.driver)}</span>` + (B ? `<span><i style="background:#a0aab9"></i>${esc(B.meta.driver)} (ghost)</span>` : "");

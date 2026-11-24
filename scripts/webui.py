@@ -54,11 +54,42 @@ _ac_cache: dict = {}
 # data helpers
 # --------------------------------------------------------------------------
 def vehicles() -> list[dict]:
-    out = []
+    """Every vehicle file we can train/evaluate with, with its catalogue entry.
+
+    Order: favourites first, then by category (mv/vehicle/catalog.py).  Each
+    item keeps the original ``name``/``where`` keys and adds ``title``,
+    ``category``, ``favourite``, ``status`` and ``reasons`` for the car pickers.
+    """
+    out, seen = [], set()
+    try:
+        from mv.vehicle.catalog import list_cars
+        for c in list_cars(ac_root()):
+            if c.imported:
+                seen.add(c.id)
+                out.append({"name": c.id, "where": c.where, "title": c.title, "category": c.category,
+                            "favourite": c.favourite, "status": c.status, "reasons": c.reasons, "flags": c.flags})
+    except Exception as e:                          # the catalogue must never hide the plain file list
+        print(f"catalogue unavailable: {e}", file=sys.stderr)
     for sub in ("local", "library"):
         for p in sorted((ROOT / "vehicles" / sub).glob("*.yaml")):
-            out.append({"name": p.stem, "where": sub})
+            if p.stem not in seen:
+                seen.add(p.stem)
+                out.append({"name": p.stem, "where": sub, "title": p.stem, "category": "road",
+                            "favourite": False, "status": "unchecked", "reasons": [], "flags": []})
     return out
+
+
+def catalogue_cars() -> list[dict]:
+    """All cars installed in Assetto Corsa (and our library) for the Import tab."""
+    from mv.vehicle.catalog import list_cars
+    return [{"id": c.id, "title": c.title, "category": c.category, "favourite": c.favourite,
+             "installed": c.installed, "available": c.available, "imported": c.imported, "where": c.where,
+             "status": c.status, "reasons": c.reasons, "flags": c.flags} for c in list_cars(ac_root())]
+
+
+def categories() -> list[dict]:
+    from mv.vehicle.catalog import CATEGORIES, RACING
+    return [{"key": k, "label": v, "racing": k in RACING} for k, v in CATEGORIES.items()]
 
 
 _viewer = None
@@ -292,6 +323,23 @@ def act(path: str, body: dict) -> dict:
             raise ValueError("unknown car")
         tid = start_task("import", f"Import car {car}", ["scripts/import_ac_car.py", car])
         return {"ok": True, "task": tid, "msg": f"Importing {car} ..."}
+    if path == "/api/import/many":
+        # several cars in one background task: "racing", "all", "favourites" or a category key
+        from mv.vehicle.catalog import CATEGORIES
+        sel = str(body.get("selection", "racing"))
+        if sel not in ("racing", "all", "favourites", *CATEGORIES):
+            raise ValueError("unknown selection")
+        tid = start_task("import", f"Import {sel} cars", ["scripts/import_ac_car.py", "--category", sel])
+        return {"ok": True, "task": tid, "msg": f"Importing {sel} cars - progress under Tools > Tasks (a few s per car)."}
+    if path == "/api/favourite":
+        from mv.vehicle.catalog import set_favourite
+        car = str(body.get("car", ""))
+        known = {c["id"] for c in catalogue_cars()}
+        if car not in known:
+            raise ValueError("unknown car")
+        on = bool(body.get("on"))
+        set_favourite(car, on)
+        return {"ok": True, "msg": f"{car} {'added to' if on else 'removed from'} favourites (vehicles/favourites.yaml)."}
     if path == "/api/import/track":
         track = body.get("track", "")
         if track not in ac_lists()["tracks"]:
@@ -388,9 +436,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(tp.snapshot(max_age_s=3.0))
             if p == "/api/options":
                 return self._json({"vehicles": vehicles(), "tracks": local_tracks(), "checkpoints": checkpoints(),
-                                   "presets": PRESETS, "lanes": len(tp.load_plan())})
+                                   "presets": PRESETS, "lanes": len(tp.load_plan()), "categories": categories()})
             if p == "/api/ac":
-                return self._json(ac_lists())
+                # tracks are cached; cars come fresh from the catalogue (favourites/imports change)
+                return self._json({**ac_lists(), "cars": catalogue_cars()})
             if p == "/api/runs":
                 runs = sorted((d.name for d in (ROOT / "runs").iterdir() if d.is_dir() and (d / "log.csv").is_file()),
                               key=lambda n: (ROOT / "runs" / n / "log.csv").stat().st_mtime, reverse=True)

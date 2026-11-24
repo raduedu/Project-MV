@@ -1,0 +1,14 @@
+# Favourite cars - shown first (starred) wherever the control panel asks for a car.
+# Car ids only (the file name of vehicles/local/<id>.yaml or vehicles/library/<id>.yaml).
+# Edit by hand or with the star in the control panel. No Assetto Corsa data in this file.
+favourites:
+  - ks_porsche_911_gt3_rs
+  - ks_porsche_918_spyder
+  - porsche_taycan_turbo_gt_weissach
+  - fs_generic_ev
+  - ks_ferrari_sf70h
+  - ks_porsche_911_gt3_r_2016
+  - ks_mercedes_amg_gt3
+  - ks_porsche_911_rsr_2017
+  - ks_porsche_cayman_gt4_clubsport
+  - ks_porsche_919_hybrid_2016

@@ -188,8 +188,11 @@ repeat:
   start point, speed, and ±grip, mass, power and downforce. 30 % of episodes
   are driven "blind" (preview limited to 25–60 m), which is what a first lap on
   an unknown Formula Student track looks like.
-* **Validation** — fixed random circuits plus imported real circuits (Imola,
-  Monza, Spa, Mugello). The driver never trains on these.
+* **Validation** — fixed random circuits plus the imported real circuits listed in
+  `tracks/sets.yaml`. Since WP42 (D-039) the other imported circuits may also be
+  trained on (`train.py --real-tracks all`); a few (`never_train`: Mugello, Laguna
+  Seca, Brands Hatch) are held out for good, so "races a real circuit it has never
+  seen" stays a measured number.
 
 ## 7. Where things run
 

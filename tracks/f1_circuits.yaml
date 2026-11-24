@@ -1,0 +1,18 @@
+# Real F1 qualifying laps used as benchmarks (scripts/f1_benchmark.py, engineering log WP43).
+# Maps OpenF1's circuit name to the circuit imported from Assetto Corsa. Names only -
+# the F1 data and the circuits stay on this computer (D-038).
+#
+# year: the season whose car is the benchmark. 2023 (Red Bull RB19) wherever the
+#       circuit was raced that year; Imola was cancelled in 2023 (flooding), so 2024.
+# layout_note: where the game's circuit is not the one raced; those stretches are
+#       detected (alignment residual) and left out of the car fit.
+
+- {circuit: Spielberg, track: ks_red_bull_ring__layout_gp, year: 2023}
+- {circuit: Spa-Francorchamps, track: spa, year: 2023}
+- {circuit: Monza, track: monza, year: 2023}
+- {circuit: Silverstone, track: ks_silverstone__gp, year: 2023}
+- {circuit: Zandvoort, track: ks_zandvoort, year: 2023,
+   layout_note: "turn 3 was re-profiled (banked) for F1 in 2020; the game has the older corner"}
+- {circuit: Imola, track: imola, year: 2024}
+- {circuit: Catalunya, track: ks_barcelona__layout_gp, year: 2023,
+   layout_note: "F1 removed the last-sector chicane in 2023; the game still has it - lap times not comparable"}

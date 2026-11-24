@@ -1,0 +1,31 @@
+# Which imported real circuits (tracks/local/<name>.npz) are used for what.
+# Only names live here - the circuits themselves come from the owner's own
+# Assetto Corsa install (scripts/import_ac_track.py) and are never committed.
+#
+# validation:  driven at every training check and by strict evaluations.
+# never_train: real circuits the driver must NEVER see in training, so "drives a
+#              real circuit it has never seen" stays a measured number
+#              (engineering log WP42). They are also in `validation`.
+# skip:        imported layouts that are not closed racing circuits.
+# Every other imported circuit may be used for training (train.py --real-tracks).
+
+validation:
+  - imola
+  - ks_red_bull_ring__layout_gp
+  - monza
+  - mugello
+  - spa
+  - ks_barcelona__layout_gp
+  - ks_silverstone__gp
+  - ks_zandvoort
+  - ks_laguna_seca
+  - ks_brands_hatch__gp
+
+never_train:
+  - mugello
+  - ks_laguna_seca
+  - ks_brands_hatch__gp
+
+skip:
+  - ks_monza66__full              # oval + road course: the lap crosses itself (bridge) - our tracks cannot
+  - ks_silverstone__international # imported edges wrong (width up to 103 m, 1 m corner radius)

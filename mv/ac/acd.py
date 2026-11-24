@@ -33,7 +33,23 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
-__all__ = ["derive_key", "read_acd", "load_car_data"]
+__all__ = ["derive_key", "read_acd", "load_car_data", "car_has_data", "CarNotAvailable"]
+
+
+class CarNotAvailable(FileNotFoundError):
+    """The car folder exists but holds no physics data (no ``data`` folder, no ``data.acd``).
+
+    Why this is its own error: Steam creates empty folders for DLC cars the
+    owner has not bought (seen for ``ks_ferrari_488_gt3_2020`` and
+    ``ks_ferrari_488_challenge_evo``).  That is not a bug in the importer, so a
+    batch import reports such cars as "not available" and carries on.
+    """
+
+
+def car_has_data(car_dir: str | Path) -> bool:
+    """True when the car folder contains physics data we can read."""
+    car_dir = Path(car_dir)
+    return (car_dir / "data").is_dir() or (car_dir / "data.acd").is_file()
 
 
 def _i32(v: int) -> int:
@@ -167,7 +183,8 @@ def load_car_data(car_dir: str | Path) -> dict[str, str]:
         return out
     acd = car_dir / "data.acd"
     if not acd.is_file():
-        raise FileNotFoundError(f"No data folder or data.acd in {car_dir}")
+        raise CarNotAvailable(f"No data folder or data.acd in {car_dir} "
+                              "(car not installed - e.g. a DLC that is not owned)")
     for name, blob in read_acd(acd, car_dir.name).items():
         out[name] = blob.decode("utf-8", errors="replace")
     sample = out.get("car.ini", "")

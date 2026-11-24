@@ -560,3 +560,39 @@ def test_downshift_point_is_configurable(car):
     assert torch.allclose(new.gb_dn_v[0, 1:n], up[:n - 1] * 0.98)
     env = RacingEnv(car, TrackBatch([circle_track()], ds=1.0), 1, EnvConfig(downshift_frac=0.98), device="cpu")
     assert torch.allclose(env.sim.gb_dn_v, new.gb_dn_v)
+
+
+def test_distillation_also_copies_the_critic(car):
+    """WP44: a teacher with a critic (``value``) has it copied too - a student whose critic
+    starts from nothing rewards speed it has not learnt is dangerous (log WP40/41)."""
+    from mv.rl.pretrain import warm_start
+    tracks = TrackBatch(random_tracks(4, seed=3, cfg="mixed"), ds=1.0)
+    env = RacingEnv(car, tracks, 64, EnvConfig(), device="cpu", seed=2)
+    teacher = PPO(env, PPOConfig(rollout_steps=8, epochs=1, minibatches=2, hidden=(32, 32)))
+    warm_start(teacher, env.scripted_teacher(), steps=30, critic_updates=3, printer=lambda *_: None)
+    tnet = teacher.net
+
+    class T:
+        obs_norm = tnet.obs_norm
+
+        def act(self, obs, deterministic=True):
+            return tnet.act(obs, deterministic=True)
+
+    class TV(T):
+        def value(self, obs):
+            return tnet.critic(tnet.obs_norm(obs)).squeeze(-1)
+
+    def value_error(teacher_obj):
+        torch.manual_seed(0)
+        student = PPO(env, PPOConfig(rollout_steps=8, epochs=1, minibatches=2, hidden=(64, 64)))
+        info = warm_start(student, teacher_obj, steps=40, noise=0.05, critic_updates=0, printer=lambda *_: None,
+                          buffer_steps=20, grad_steps=8, batch=512, lr=1e-3)
+        obs = env.observe()
+        with torch.no_grad():
+            err = float((student.net.value(obs) - tnet.value(obs)).pow(2).mean())
+        return err, info
+
+    without, info0 = value_error(T())
+    with_copy, info1 = value_error(TV())
+    assert info0["value_error"] is None and info1["value_error"] is not None
+    assert with_copy < 0.3 * without
