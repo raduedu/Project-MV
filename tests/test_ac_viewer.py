@@ -318,3 +318,16 @@ def test_fs_car_is_drawn_with_our_own_generic_model():
     # nothing branded in the model: only generic names in the file
     for word in ("tatuus", "ferrari", "porsche", "dallara", "red bull"):
         assert word not in model.lower()
+
+
+def test_lua_never_overwrites_vectors_by_accident():
+    """WP50: in CSP, ``a:cross(b)`` and ``a:normalize()`` overwrite ``a``. On the game's read-only car
+    vectors that is an error ("attempt to write to constant location" - the FS model switched itself
+    off in the first in-game run), elsewhere it silently corrupts a direction. Every cross product in
+    the viewer must name its own output vector."""
+    app = ROOT / "mv" / "ac" / "plugin" / "apps" / "lua" / "mv_viewer"
+    for f in ("mv_viewer.lua", "mv_fsmodel.lua"):
+        src = (app / f).read_text(encoding="utf-8")
+        for m in re.finditer(r":cross\(([^()]*)\)", src):
+            assert "," in m.group(1), f"{f}: {m.group(0)} overwrites its own vector"
+        assert not re.search(r"car\.\w+:(normalize|cross|scale|add|sub)\(", src), f"{f}: writes into a game vector"

@@ -1968,3 +1968,28 @@ the game that no bump is hit; make the margin the default for runs whose laps ar
 ## WP49 - Demo that loops for hours; FS lap at Spa (offline checks; in-game check by the owner)
 
 Owner confirmed the FS model shows in the game (open cockpit). Requests: Spa, and ideal conditions so a demo can run for hours. (1) `build_race_ini(ideal=True)`: track grip 100 % constant (no randomness, no lap gain), 22 C air / 30 C road, no wind; the owner's assists.ini (damage 100, wear, fuel) is left alone. (2) MV Viewer `keepFresh()` while a lap plays, once a second: tyre wear reset (virtual km 0), tyres at their optimum temperature, fuel held, body damage and engine life reset, bottom wear reset (CSP physics calls; failures shown in the app window). (3) FS physics-perfect lap at Spa kept 0.6 m clear of kerbs: **3:04.287**; launcher personal/demos/view_fs_spa.cmd. Lua parses; viewer tests pass. Not seen in the game yet.
+
+## WP50 — Owner's in-game run: "ODE INTERNAL ERROR 1" and the FS model switched off 🕓 (fixed offline; in-game check by the owner)
+
+**Owner (2026-11-24 15:56).** Screenshot: Assetto Corsa stopped with *ODE INTERNAL ERROR 1, assertion
+"!row1_norm_fault" failed in odemath.cpp:296* (the physics engine's collision maths met a direction
+of zero length), with the Tatuus visible instead of the FS model.
+
+**Findings (CSP log, `Documents/Assetto Corsa/logs/custom_shaders_patch.log`).**
+1. *FS model off from the first frame:* "mv_viewer FS car (switched off, stand-in shown): attempt to
+   write to constant location". Root cause: `f:cross(u)` on `car.look`. In CSP `a:cross(b)` writes
+   the result **into `a`** (SDK: "rewrites own values ... unless different `out` is provided"); the
+   game's car vectors are read-only, hence the error. The WP47 fallback worked as designed (no
+   invisible car). The same call in the ghost pose silently turned the ghost's forward vector into
+   its sideways vector. Fix: `a:cross(b, vec3())` and copies of the car vectors; test
+   `test_lua_never_overwrites_vectors_by_accident` checks every cross product names an output.
+2. *ODE error:* the log does not name a cause. The only new physics calls since the last clean run
+   were WP49's upkeep: body-damage reset, bottom-wear (collider) reset, tyre temperatures, tyre wear,
+   fuel - all at once, every second, starting in the same frame as the car was placed on the track.
+   Collider and damage resets touch exactly what ODE collides with. Fix (conservative): no upkeep in
+   the first 10 s after a start or a jump, none below 30 km/h, one job per second and only when
+   needed (fuel more than 2 l down; tyre wear every 30 s; engine life below 900); body-damage,
+   collider-wear and tyre-temperature resets removed. Ideal session conditions (WP49) stay.
+   **Not proven** to be the cause - if the error returns, it is not the upkeep.
+
+Lua parses; viewer tests 12/12.

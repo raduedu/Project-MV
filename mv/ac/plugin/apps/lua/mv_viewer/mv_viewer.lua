@@ -327,6 +327,7 @@ local function followMode() return workerStarted and not workerFailed end
 
 -- start/seek in follow mode: place the car, then tell the worker where the clock is
 local function seek(T)
+  fresh.since = 0                                        -- a jump: let the car settle before any upkeep
   playT = math.max(0, math.min(T, lap.carTime))
   placeAt(playT)
   follow.lapId = lapId
@@ -355,7 +356,7 @@ local function updateGhost()
   look = (look - up * look:dot(up)):normalize()            -- follow the road's slope (Eau Rouge)
   -- placed where the real car's 3D model would be: on the road, not at the centre of gravity
   ghostTransform = mat4x4.look(vec3(gs.x, ghostGround, -gs.y) + up * modelHeight + look * modelForward, look, up)
-  ghostPose = { o = vec3(gs.x, ghostGround, -gs.y), r = look:cross(up), u = up, f = look }
+  ghostPose = { o = vec3(gs.x, ghostGround, -gs.y), r = look:cross(up, vec3()), u = up, f = look }   -- cross() overwrites its object unless given `out`
 end
 
 -- one table reused every frame (CSP: never add new values later - that would recompile the shader)
@@ -425,7 +426,7 @@ end
 
 local function start(T)
   active, playing = true, true
-  fresh.fuel = nil
+  fresh.fuel, fresh.since = nil, 0
   if followMode() then
     seek(T)
     follow.active = 1
@@ -488,8 +489,11 @@ end
 
 local function drawFSCar()
   if not (fsMode() and active) then return end
-  local u, f = car.up, car.look
-  local pose = { o = car.position - u * rideHeight, r = f:cross(u), u = u, f = f }
+  -- copies: the game's car vectors are read-only, and vec3:cross(b) overwrites its own object unless an `out` is given
+  -- (first in-game run: "attempt to write to constant location", model switched off)
+  local u = vec3(car.up.x, car.up.y, car.up.z)
+  local f = vec3(car.look.x, car.look.y, car.look.z)
+  local pose = { o = vec3(car.position.x, car.position.y, car.position.z) - u * rideHeight, r = f:cross(u, vec3()), u = u, f = f }
   local cs = sample(lap.car, playT, { 'steer' })
   render.setBlendMode(render.BlendMode.Opaque)
   render.setDepthMode(render.DepthMode.Normal)
@@ -523,30 +527,31 @@ render.on('shadow.root', function()
 end)
 
 -- ------------------------------------------------------------------ WP49: a demo that runs for hours
--- While a lap is shown, keep the car as new about once a second: no tyre wear, tyres at their optimum
--- temperature, the fuel it started with, no body or engine damage, no worn bottom. (The owner's own
--- assists - damage 100 %, wear and fuel on - stay as they are for his own driving; this only acts
--- while the viewer drives the car.)
-fresh.last, fresh.fuel, fresh.notes = 0, nil, nil
+-- While a lap is shown, keep the car as new: tyre wear reset, the fuel it started with, engine life.
+-- Careful by design (the first version, which also reset body damage and bottom wear and set tyre
+-- temperatures - all at once, every second, from the very first frame - was running when the game's
+-- physics engine stopped with "ODE INTERNAL ERROR 1"): nothing during the first 10 s after a start
+-- or a jump, nothing while slow, one job per second, and each only when it is actually needed.
+-- (The owner's own assists - damage, wear, fuel - stay as they are for his own driving.)
+fresh.last, fresh.fuel, fresh.notes, fresh.since, fresh.job = 0, nil, nil, 0, 0
 
 local function keepFresh()
   local now = os.preciseClock()
-  if now - fresh.last < 1.0 then return end
+  if fresh.since == 0 then fresh.since, fresh.wearT = now, now end
+  if now - fresh.since < 10 or (car.speedKmh or 0) < 30 or now - fresh.last < 1.0 then return end
   fresh.last = now
   fresh.fuel = fresh.fuel or math.max(car.fuel or 0, 5)
-  local errs = {}
-  local function try(name, fn, ...)
-    local ok, err = pcall(fn, ...)
-    if not ok then errs[#errs + 1] = name .. ': ' .. tostring(err) end
+  fresh.job = fresh.job % 3 + 1
+  local ok, err = true, nil
+  if fresh.job == 1 and (car.fuel or 99) < fresh.fuel - 2 then
+    ok, err = pcall(physics.setCarFuel, 0, fresh.fuel)
+  elseif fresh.job == 2 and now - (fresh.wearT or now) > 30 then   -- tyre wear: every 30 s is plenty
+    fresh.wearT = now
+    ok, err = pcall(physics.setTyresVirtualKM, 0, nil, 0)
+  elseif fresh.job == 3 and (car.engineLifeLeft or 1000) < 900 then
+    ok, err = pcall(physics.setCarEngineLife, 0, 1000)
   end
-  try('tyre wear', physics.setTyresVirtualKM, 0, nil, 0)
-  local opt = car.wheels and car.wheels[0] and car.wheels[0].tyreOptimumTemperature
-  if opt and opt > 0 then try('tyre temperature', physics.setTyresTemperature, 0, nil, opt) end
-  try('fuel', physics.setCarFuel, 0, fresh.fuel)
-  try('body damage', physics.setCarBodyDamage, 0, vec4(0, 0, 0, 0))
-  try('engine', physics.setCarEngineLife, 0, 1000)
-  try('bottom wear', physics.resetColliderWears, 0)
-  fresh.notes = #errs > 0 and table.concat(errs, '; ') or nil
+  if not ok then fresh.notes = tostring(err) end
 end
 
 -- ------------------------------------------------------------------ main loop
