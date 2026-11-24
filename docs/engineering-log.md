@@ -2106,3 +2106,5 @@ only if it watches that game. Test `test_only_the_demo_games_watchdog_restores_t
 Also: the upkeep cools tyres back to their optimum when one runs 25 C over (the stand-in is pushed
 through corners at the recorded car's speeds). The one or two spots off the track at Spa are left as
 they are (follower lag at FS-car speeds; not worth a wider margin for the whole lap). 179 tests pass.
+
+**Addendum (owner, 16:50): Spa closer to the edge.** "Make it a little closer to the curb/edge, but not go over it: 0.1 or 0.2 m instead of 0.6." Spa FS lap recomputed with the stand-in kept **0.2 m** from the edges (line 1.06 m from the edge): **3:03.992** (0.6 m: 3:04.287). `personal/demos/view_fs_spa.cmd` plays it; Monza stays at 0.6 m.
