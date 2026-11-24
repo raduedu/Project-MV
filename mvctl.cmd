@@ -17,7 +17,7 @@ set CMD=%1
 if "%CMD%"=="" set CMD=status
 if /i "%CMD%"=="ui"      ( %PY% scripts\webui.py start & goto :eof )
 if /i "%CMD%"=="ui-stop" ( %PY% scripts\webui.py stop & goto :eof )
-if /i "%CMD%"=="remote"  ( %PY% scripts\webui.py start & "C:\Program Files\Tailscale\tailscale.exe" serve --bg 8765 & goto :eof )
+if /i "%CMD%"=="remote"  ( %PY% scripts\webui.py start --no-browser & "C:\Program Files\Tailscale\tailscale.exe" serve --bg 8765 & goto :eof )
 if /i "%CMD%"=="remote-off" ( "C:\Program Files\Tailscale\tailscale.exe" serve --https=443 off & goto :eof )
 if /i "%CMD%"=="tests"   ( %PY% -m pytest tests -q & goto :eof )
 if /i "%CMD%"=="help"    ( findstr /b "rem   mvctl" "%~f0" & goto :eof )

@@ -462,7 +462,7 @@ def running_pid() -> int | None:
     return None
 
 
-def start() -> None:
+def start(open_browser: bool = True) -> None:
     url = f"http://{HOST}:{PORT}"
     if running_pid():
         print(f"already running: {url}")
@@ -473,7 +473,8 @@ def start() -> None:
                          creationflags=flags, close_fds=True)
         time.sleep(2)
         print(f"web interface running: {url}   (stop with: mvctl ui-stop - training is not affected)")
-    webbrowser.open(url)
+    if open_browser:                                  # not for "mvctl remote": nobody is at the laptop
+        webbrowser.open(url)
 
 
 def stop() -> None:
@@ -489,4 +490,8 @@ def stop() -> None:
 
 
 if __name__ == "__main__":
-    {"start": start, "stop": stop, "serve": serve}.get(sys.argv[1] if len(sys.argv) > 1 else "start", start)()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "start"
+    if cmd == "start":
+        start(open_browser="--no-browser" not in sys.argv)
+    else:
+        {"stop": stop, "serve": serve}.get(cmd, start)()
