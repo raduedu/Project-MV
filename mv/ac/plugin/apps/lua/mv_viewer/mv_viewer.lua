@@ -117,7 +117,7 @@ local frame = 0
 local gap = 0
 local ghostIdx = 1
 local heights = {}           -- ghost sample index -> road height (racing line drawing)
-local options = { ghost = true, ghostOpacity = 0.6, racingLine = true, lineAheadM = 450 }
+local options = { ghost = true, ghostOpacity = 0.6, racingLine = true, lineAheadM = 450, fsBrightness = 1.0 }
 local controls = nil
 local savedAutoShift = nil
 local rideHeight = 0.5       -- car reference point above the road (m), measured at rest
@@ -133,6 +133,7 @@ local shift = nil            -- {target, t0, lastPulse} while a gear change is i
 -- ghost model
 local ghostTransform = nil   -- mat4x4: where the ghost car is drawn this frame (nil = not shown)
 local ghostMesh = nil        -- ac.SimpleMesh.carShape(0): CSP's simplified 3D shape of this car
+local ghostPose = nil        -- {o, r, u, f}: the same place as ghostTransform, for our own FS model (WP47)
 
 -- ------------------------------------------------------------------ helpers
 local function readString(field, len)
@@ -353,6 +354,7 @@ local function updateGhost()
   look = (look - up * look:dot(up)):normalize()            -- follow the road's slope (Eau Rouge)
   -- placed where the real car's 3D model would be: on the road, not at the centre of gravity
   ghostTransform = mat4x4.look(vec3(gs.x, ghostGround, -gs.y) + up * modelHeight + look * modelForward, look, up)
+  ghostPose = { o = vec3(gs.x, ghostGround, -gs.y), r = look:cross(up), u = up, f = look }
 end
 
 -- one table reused every frame (CSP: never add new values later - that would recompile the shader)
@@ -452,6 +454,72 @@ local function handleCommand()
   end
 end
 
+-- ------------------------------------------------------------------ WP47: our own generic FS car
+-- The owner's game has no Formula Student car. When the control panel sends the model name
+-- 'mv:fs_generic' (vehicles/ac_stand_ins.yaml), the game car that is actually moved (a stand-in,
+-- for physics and cameras) is hidden and our own unbranded FS model (mv_fsmodel.lua) is drawn on it.
+local fsOk, fsModel = pcall(require, 'mv_fsmodel')
+if not fsOk then ac.log('mv_viewer: FS model not available: ' .. tostring(fsModel)) end
+local fsState = { spin = 0, ghostSpin = 0, hidden = false, broken = nil }
+local FS_MAX_STEER = math.rad(26)            -- front-wheel lock of vehicles/library/fs_generic_ev.yaml
+
+-- (if drawing it ever fails, `broken` switches it off and the stand-in is shown again - never an invisible car)
+local function fsMode() return fsOk and not fsState.broken and lap ~= nil and lap.model == 'mv:fs_generic' end
+
+local function setStandInVisible(visible)
+  local ok, err = pcall(function() ac.findNodes('carRoot:0'):setVisible(visible) end)
+  if not ok then ac.log('mv_viewer: could not hide/show the stand-in car: ' .. tostring(err)) end
+  fsState.hidden = not visible
+end
+
+local function fsTick(dt)
+  local want = fsMode() and active
+  if want ~= fsState.hidden then setStandInVisible(not want) end
+  if not want then return end
+  local r = fsModel.dim.tyreR
+  fsState.spin = (fsState.spin + (car.speedKmh or 0) / 3.6 * dt / r) % (2 * math.pi)
+  if lap.ghost then
+    local gs = sample(lap.ghost, playT, { 'speed' })
+    fsState.ghostSpin = (fsState.ghostSpin + (playing and gs.speed or 0) * speed * dt / r) % (2 * math.pi)
+  end
+end
+
+local function drawFSCar()
+  if not (fsMode() and active) then return end
+  local u, f = car.up, car.look
+  local pose = { o = car.position - u * rideHeight, r = f:cross(u), u = u, f = f }
+  local cs = sample(lap.car, playT, { 'steer' })
+  render.setBlendMode(render.BlendMode.Opaque)
+  render.setDepthMode(render.DepthMode.Normal)
+  render.setCullMode(render.CullMode.None)
+  fsModel.draw(pose, cs.steer * FS_MAX_STEER, fsState.spin, { brightness = options.fsBrightness })
+end
+
+local function drawFSGhost()
+  if not (fsMode() and ghostPose) then return false end
+  render.setBlendMode(render.BlendMode.AlphaBlend)
+  render.setDepthMode(render.DepthMode.ReadOnlyLessEqual)
+  render.setCullMode(render.CullMode.None)
+  fsModel.draw(ghostPose, 0, fsState.ghostSpin, { brightness = 1.3 * options.fsBrightness,
+    alpha = 0.55 * options.ghostOpacity, tint = { 0.3, 0.65, 1.0 } })
+  return true
+end
+
+ac.onRelease(function()                      -- app closed or reloaded: never leave the car invisible
+  if fsState.hidden then setStandInVisible(true) end
+end)
+
+render.on('main.root.opaque', function()
+  local ok, err = pcall(drawFSCar)
+  if not ok then
+    fsState.broken = tostring(err)
+    ac.log('mv_viewer FS car (switched off, stand-in shown): ' .. fsState.broken)
+  end
+end)
+render.on('shadow.root', function()
+  pcall(drawFSCar)                           -- its shadow on the road (if this pass accepts it)
+end)
+
 -- ------------------------------------------------------------------ main loop
 local function tick(dt)
   frame = frame + 1
@@ -508,6 +576,8 @@ local function tick(dt)
     if lap then status = sim.isPaused and 'game paused' or 'stopped - press Play' end
   end
   pcall(updateGhost)
+  local fsOkTick, fsErr = pcall(fsTick, dt)
+  if not fsOkTick then ac.log('mv_viewer FS: ' .. tostring(fsErr)) end
 
   local s = st.seq
   if s % 2 == 1 then s = s + 1 end
@@ -566,7 +636,10 @@ local function draw()
     end
   end
   local carDrawn = false
-  if options.ghost then
+  if options.ghost and fsMode() then              -- FS car: the ghost is our model, see-through
+    local ok, res = pcall(drawFSGhost)
+    carDrawn = ok and res
+  elseif options.ghost then
     local ok, res = pcall(drawGhostCar)
     carDrawn = ok and res
     if not ok then ac.log('mv_viewer ghost car: ' .. tostring(res)) end
@@ -622,6 +695,11 @@ function script.windowMain(dt)
     local o, oChanged = ui.slider('##ghostop', options.ghostOpacity, 0.1, 1.0, 'ghost opacity %.2f')
     if oChanged then options.ghostOpacity = o end
     if ui.checkbox('Ghost racing line', options.racingLine) then options.racingLine = not options.racingLine end
+    if fsState.broken then ui.textWrapped('FS model failed, showing the stand-in car: ' .. fsState.broken) end
+    if fsMode() then
+      local b, bChanged = ui.slider('##fsbright', options.fsBrightness, 0.3, 3.0, 'FS model brightness %.2f')
+      if bChanged then options.fsBrightness = b end
+    end
     if ui.checkbox('Loop', loop) then loop = not loop end
   end
   ui.text(string.format('physics.allowed: %s   mode: %s', tostring(physics.allowed()),

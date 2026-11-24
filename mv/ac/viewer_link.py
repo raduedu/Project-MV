@@ -233,6 +233,11 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
         car["rpm"] = engine_rpm(car["speed"], car["gear"], body)
         label += f" | shown with the {body.name} body"
         vp = body
+        from mv.ac.launch import car_ids_of, stand_in_model
+        drawn = next((d for d in (stand_in_model(c) for c in car_ids_of(meta)) if d), None)
+        if drawn:                               # the viewer hides the stand-in and draws our own model (WP47)
+            model = f"mv:{drawn}"
+            label = label.replace(f"shown with the {body.name} body", f"MV {drawn} model (moved as {body.name})")
     if ghost:
         label += f" | ghost {ghost['meta']['lap_time']:.3f} s"
     return {"meta": meta, "label": label, "car": car, "model": model,

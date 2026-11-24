@@ -298,3 +298,23 @@ def test_stand_in_body_for_cars_the_game_does_not_have(tmp_path):
     assert np.all(np.diff(t[changes + 1]) >= 0.6 - 1e-9)              # held at least 0.6 s
     assert rpm.max() < u.rpm_max                                      # never on the limiter
     assert g[np.argmax(v)] > g[0]                                     # up through the gears and back down
+
+
+def test_fs_car_is_drawn_with_our_own_generic_model():
+    """WP47: the FS car's stand-in entry asks the viewer to hide the game car and draw MV's own
+    unbranded FS model; the Lua side has the model, loads it, hides/restores the stand-in, and
+    falls back to the visible stand-in if drawing fails."""
+    from mv.ac.launch import stand_in_model
+    assert stand_in_model("fs_generic_ev") == "fs_generic"
+    assert stand_in_model("porsche_taycan_turbo_gt_weissach") is None      # plain stand-in, no model of ours
+    app = ROOT / "mv" / "ac" / "plugin" / "apps" / "lua" / "mv_viewer"
+    model = (app / "mv_fsmodel.lua").read_text(encoding="utf-8")
+    viewer = (app / "mv_viewer.lua").read_text(encoding="utf-8")
+    assert "render.glBegin(render.GLPrimitiveType.Triangles)" in model and "return M" in model
+    assert re.search(r"pcall\(require, 'mv_fsmodel'\)", viewer)
+    assert "lap.model == 'mv:fs_generic'" in viewer
+    assert "setVisible(visible)" in viewer and "ac.onRelease" in viewer        # never left invisible
+    assert "fsState.broken" in viewer                                          # failure -> stand-in shown
+    # nothing branded in the model: only generic names in the file
+    for word in ("tatuus", "ferrari", "porsche", "dallara", "red bull"):
+        assert word not in model.lower()

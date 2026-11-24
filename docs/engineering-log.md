@@ -1891,3 +1891,45 @@ was found (mass fell back to 1 400 kg, no rpm). Fix: `find_vehicle` accepts the 
 `ac_view.py --best` also matches the file id. New git-ignored folder **`personal/`** for the
 owner's own demos (also refused by `publish_github.ps1`): `personal/demos/view_taycan_monza.cmd`
 plays that lap in the game, `personal/demos/*.gif` are the animations.
+
+## WP47 — Our own generic FS car model in the game 🕓 (offline checks; in-game check by the owner)
+
+**Owner (2026-11-24).** "It has to have an FS model (generic, no names or others)" - the Tatuus
+stand-in of WP46 is not acceptable for the FS car.
+
+**Approach.** No FS car exists in the owner's game, and a branded mod is ruled out. The MV Viewer
+app now draws an FS car of its own (`mv_viewer/mv_fsmodel.lua`):
+* Geometry built once from simple shapes in the car's frame: tapered monocoque and nose, cockpit
+  opening, driver helmet and visor, main and front roll hoops, cooling sidepods, rear
+  accumulator/motor housing, diffuser, two-element front wing and three-element rear wing with end
+  plates and pylons, upper and lower wishbones, four wheels (tread, sidewalls, two-tone rims so the
+  turning is visible). Proportions from `vehicles/library/fs_generic_ev.yaml` (wheelbase 1.55 m,
+  track 1.22/1.18 m, tyre radius 0.203 m). White body, carbon black, one red accent; no names,
+  numbers or logos. 1 156 triangles.
+* Drawn every frame with CSP's immediate-mode calls (`render.glBegin/glVertex/glEnd`, confirmed in
+  the CSP SDK shipped with the owner's game) in the opaque pass and the shadow pass. CSP has no
+  custom-mesh object for apps (only `ac.SimpleMesh.carShape/carCollider/trackLine`), and writing
+  a .kn5 model file blind (no way to test it here) could crash the game. Shading: a fixed light from
+  above, 6 shade steps; triangles grouped by colour and step, so a few dozen draw calls per frame.
+* Front wheels steer with the recorded steering (x 26 deg lock), all wheels turn with the speed.
+* The game still moves the Tatuus FA1 (physics, cameras, the force follower) but hides it
+  (`carRoot:0` invisible) while the FS model is shown; it is shown again when playback stops, when
+  the app is closed or reloaded (`ac.onRelease`), and if drawing ever fails (`fsState.broken` - the
+  reason is shown in the app window). Never an invisible car.
+* The ghost of an FS lap is the same model, see-through and blue.
+* Control panel side: `vehicles/ac_stand_ins.yaml` entries may be `{car: <game car>, draw: <our
+  model>}`; `fs_generic_ev: {car: tatuusfa1, draw: fs_generic}`; `viewer_payload` sends the model
+  name `mv:fs_generic` in the existing `model` field (protocol unchanged). App window: "FS model
+  brightness" slider (unlit colours: how bright they look depends on the time of day).
+
+**Demo laps (owner's private folder `personal/demos`).** FS car physics-perfect lap at Monza
+**2:31.194** (slowest point 71 km/h in the chicanes, otherwise at its 139 km/h top speed - 80 kW is
+the FS power limit); launcher `view_fs_monza.cmd`. The learned FS driver cannot lap a real circuit
+yet (WP46): `fs_v4_circuits` (training since 15:30, 2 h) is meant to change that.
+
+**Verification.** Both Lua files parse; every global they use exists in CSP; Python copy of the
+geometry rendered from three angles (`personal/demos/fs_model_preview.png`) - reads as an FS car;
+test `test_fs_car_is_drawn_with_our_own_generic_model` (stand-in table, Lua wiring, fallback, no brand
+names in the model). 175 tests pass. **Not seen in the game**: drawing speed (~3 500 vertices per
+pass from Lua), whether the shadow pass accepts immediate-mode drawing, and colour brightness are
+the open questions.

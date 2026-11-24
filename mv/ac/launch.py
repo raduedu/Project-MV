@@ -35,7 +35,7 @@ import time
 import uuid
 from pathlib import Path
 
-__all__ = ["documents_dir", "race_ini_path", "ac_ids_for_lap", "stand_in_for", "car_skins", "build_race_ini", "write_race_ini",
+__all__ = ["documents_dir", "race_ini_path", "ac_ids_for_lap", "stand_in_for", "stand_in_model", "car_skins", "build_race_ini", "write_race_ini",
            "game_running", "steam_running", "running_session", "start_game", "open_lap_in_game", "watch_game", "BACKUP_DIR"]
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +103,16 @@ def car_ids_of(meta: dict, vp=None) -> list[str]:
     return out
 
 
+def stand_in_model(car: str) -> str | None:
+    """Our own model the viewer draws instead of the stand-in's body ("fs_generic"), or None."""
+    import yaml
+    f = ROOT / "vehicles" / "ac_stand_ins.yaml"
+    if not f.is_file():
+        return None
+    entry = ((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("stand_ins") or {}).get(car)
+    return entry.get("draw") if isinstance(entry, dict) else None
+
+
 def stand_in_for(car: str, ac_root=None) -> str | None:
     """The installed game car that shows a car file the game does not have (vehicles/ac_stand_ins.yaml).
 
@@ -116,6 +126,8 @@ def stand_in_for(car: str, ac_root=None) -> str | None:
         return None
     table = (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("stand_ins") or {}
     sid = table.get(car)
+    if isinstance(sid, dict):                # {car: <game car>, draw: <our model>}
+        sid = sid.get("car")
     if not sid:
         return None
     try:

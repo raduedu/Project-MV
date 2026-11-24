@@ -1,13 +1,18 @@
 # Car files that are NOT cars in the owner's Assetto Corsa, and the game car whose body shows them
 # in "View in Assetto Corsa" (engineering log WP46). Ids only - no game data in this file.
 #
+# An entry is either a game car id or {car: <id>, draw: <MV model>} - then the game car is hidden
+# and the viewer draws that model of ours instead (only fs_generic exists).
+#
 # The lap itself is always ours (our physics, our driver); the game car is only the costume:
 # its own engine sound and gearbox are used (gears are chosen for its gearbox), and the force
 # follower pushes it with the stand-in's own mass so it tracks the recorded path.
 # A stand-in is only used if that car is installed in the game.
 
 stand_ins:
-  fs_generic_ev: tatuusfa1                              # FS electric car -> Tatuus FA1, the closest single-seater (no electric car in the game)
+  # FS electric car: the Tatuus FA1 single-seater is moved (physics, cameras) but hidden, and the viewer
+  # draws our own generic, unbranded FS model on it (mv_viewer/mv_fsmodel.lua, WP47)
+  fs_generic_ev: {car: tatuusfa1, draw: fs_generic}
   porsche_taycan_turbo_gt_weissach: ks_porsche_panamera # Taycan (electric) -> Panamera, nearest Porsche four-door shape
   porsche_911_gt3_rs_992: ks_porsche_911_gt3_rs         # public-data 992 -> the game's 991 GT3 RS
   porsche_918_spyder: ks_porsche_918_spyder             # public-data 918 Weissach -> the game's 918

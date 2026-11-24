@@ -523,3 +523,15 @@ supersedes it — do not edit history.*
   imported like any car and then needs no stand-in).
 * **Why.** The lap is ours either way (our physics, our driver); the game only draws it. Gears and mass
   follow the stand-in so the game's own engine and the force follower behave sensibly.
+
+### D-042 — The FS car is drawn by our own app, not shown as another car
+
+* **Context.** The owner: the FS car must look like an FS car, generic, no names. The game has none.
+* **Options.** (a) A branded FS or single-seater mod. (b) Write a complete game car (.kn5 model plus
+  physics files) for the owner to install. (c) Draw a generic model from the viewer app on top of a
+  hidden stand-in.
+* **Decision.** (c). (b) stays possible later.
+* **Why.** (a) is excluded by the owner. (b) means writing a binary model format and a full physics
+  set that cannot be tested here, and a bad file can crash the game. (c) uses only drawing calls of
+  the owner's CSP, is unbranded by construction, and falls back to the visible stand-in on failure.
+  Supersedes D-041 for the FS car only.
