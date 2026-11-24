@@ -164,8 +164,14 @@ def _dump_ini(sections) -> str:
 
 
 def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
-                   ghost_car: bool = False, ghost_skin: str = "") -> str:
-    """New race.ini text: the owner's file with car, circuit, session and cars replaced."""
+                   ghost_car: bool = False, ghost_skin: str = "", ideal: bool = True) -> str:
+    """New race.ini text: the owner's file with car, circuit, session and cars replaced.
+
+    ``ideal`` (default, WP49): conditions for a demo that loops for hours - full and constant track
+    grip (no rubbering-in, no randomness), 22 C air / 30 C road, no wind. The owner's own assist
+    settings (damage, wear, fuel use) live in assists.ini and are left alone; the MV Viewer app keeps
+    the demo car fresh instead (tyre wear, tyre temperature, fuel, damage).
+    """
     secs = _parse_ini(old_text)
     order = [n for n, _ in secs]
     d = {n: dict(keys) for n, keys in secs}
@@ -181,6 +187,10 @@ def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
     for sec in ("REMOTE", "REPLAY", "BENCHMARK", "RESTART", "__PREVIEW_GENERATION"):
         put(sec, ACTIVE=0)
     put("GHOST_CAR", RECORDING=0, PLAYING=0, LOAD=0, ENABLED=0)
+    if ideal:
+        put("DYNAMIC_TRACK", SESSION_START=100, SESSION_TRANSFER=100, RANDOMNESS=0, LAP_GAIN=0)
+        put("TEMPERATURE", AMBIENT=22, ROAD=30)
+        put("WIND", SPEED_KMH_MIN=0, SPEED_KMH_MAX=0)
     # one Practice session, no time limit; drop any other sessions of the last race weekend
     for n in [n for n in order if re.fullmatch(r"SESSION_\d+", n) and n != "SESSION_0"]:
         order.remove(n)

@@ -1964,3 +1964,7 @@ physics throws it in the air.
 
 **Next.** When the FS driver laps Monza cleanly in validation: record its lap for the game; check in
 the game that no bump is hit; make the margin the default for runs whose laps are shown in the game.
+
+## WP49 - Demo that loops for hours; FS lap at Spa (offline checks; in-game check by the owner)
+
+Owner confirmed the FS model shows in the game (open cockpit). Requests: Spa, and ideal conditions so a demo can run for hours. (1) `build_race_ini(ideal=True)`: track grip 100 % constant (no randomness, no lap gain), 22 C air / 30 C road, no wind; the owner's assists.ini (damage 100, wear, fuel) is left alone. (2) MV Viewer `keepFresh()` while a lap plays, once a second: tyre wear reset (virtual km 0), tyres at their optimum temperature, fuel held, body damage and engine life reset, bottom wear reset (CSP physics calls; failures shown in the app window). (3) FS physics-perfect lap at Spa kept 0.6 m clear of kerbs: **3:04.287**; launcher personal/demos/view_fs_spa.cmd. Lua parses; viewer tests pass. Not seen in the game yet.

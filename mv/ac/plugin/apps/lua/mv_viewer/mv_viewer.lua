@@ -120,6 +120,7 @@ local heights = {}           -- ghost sample index -> road height (racing line d
 local options = { ghost = true, ghostOpacity = 0.6, racingLine = true, lineAheadM = 450, fsBrightness = 1.0 }
 local controls = nil
 local savedAutoShift = nil
+local fresh = {}           -- WP49 demo upkeep state (see keepFresh)
 local rideHeight = 0.5       -- car reference point above the road (m), measured at rest
 local lastGround = nil
 local dirSign = 1            -- meaning of setCarPosition's `dir`: verified after each placement
@@ -424,6 +425,7 @@ end
 
 local function start(T)
   active, playing = true, true
+  fresh.fuel = nil
   if followMode() then
     seek(T)
     follow.active = 1
@@ -520,6 +522,33 @@ render.on('shadow.root', function()
   pcall(drawFSCar)                           -- its shadow on the road (if this pass accepts it)
 end)
 
+-- ------------------------------------------------------------------ WP49: a demo that runs for hours
+-- While a lap is shown, keep the car as new about once a second: no tyre wear, tyres at their optimum
+-- temperature, the fuel it started with, no body or engine damage, no worn bottom. (The owner's own
+-- assists - damage 100 %, wear and fuel on - stay as they are for his own driving; this only acts
+-- while the viewer drives the car.)
+fresh.last, fresh.fuel, fresh.notes = 0, nil, nil
+
+local function keepFresh()
+  local now = os.preciseClock()
+  if now - fresh.last < 1.0 then return end
+  fresh.last = now
+  fresh.fuel = fresh.fuel or math.max(car.fuel or 0, 5)
+  local errs = {}
+  local function try(name, fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then errs[#errs + 1] = name .. ': ' .. tostring(err) end
+  end
+  try('tyre wear', physics.setTyresVirtualKM, 0, nil, 0)
+  local opt = car.wheels and car.wheels[0] and car.wheels[0].tyreOptimumTemperature
+  if opt and opt > 0 then try('tyre temperature', physics.setTyresTemperature, 0, nil, opt) end
+  try('fuel', physics.setCarFuel, 0, fresh.fuel)
+  try('body damage', physics.setCarBodyDamage, 0, vec4(0, 0, 0, 0))
+  try('engine', physics.setCarEngineLife, 0, 1000)
+  try('bottom wear', physics.resetColliderWears, 0)
+  fresh.notes = #errs > 0 and table.concat(errs, '; ') or nil
+end
+
 -- ------------------------------------------------------------------ main loop
 local function tick(dt)
   frame = frame + 1
@@ -568,6 +597,7 @@ local function tick(dt)
     end
     local cs, i = sample(lap.car, playT, { 'x', 'y', 'steer', 'thr', 'brk' })
     applyInputs(cs, lap.car.gear[i])
+    keepFresh()
     updateGap(cs)
     status = (playing and string.format('playing %.2fx', speed) or 'paused (car held at this moment)')
       .. (followMode() and '' or '  [fallback: per-frame placement - ' .. tostring(workerFailed or 'no worker') .. ']')
@@ -695,6 +725,7 @@ function script.windowMain(dt)
     local o, oChanged = ui.slider('##ghostop', options.ghostOpacity, 0.1, 1.0, 'ghost opacity %.2f')
     if oChanged then options.ghostOpacity = o end
     if ui.checkbox('Ghost racing line', options.racingLine) then options.racingLine = not options.racingLine end
+    if fresh.notes then ui.textWrapped('keeping the car fresh: ' .. fresh.notes) end
     if fsState.broken then ui.textWrapped('FS model failed, showing the stand-in car: ' .. fsState.broken) end
     if fsMode() then
       local b, bChanged = ui.slider('##fsbright', options.fsBrightness, 0.3, 3.0, 'FS model brightness %.2f')
