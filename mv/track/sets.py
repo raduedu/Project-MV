@@ -19,13 +19,33 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL = ROOT / "tracks" / "local"
 SETS_FILE = ROOT / "tracks" / "sets.yaml"
 
-__all__ = ["load_sets", "imported_tracks", "validation_names", "trainable_names"]
+__all__ = ["load_sets", "imported_tracks", "validation_names", "trainable_names", "narrowed"]
+
+
+def narrowed(track, margin_m: float, min_half_width_m: float = 2.0):
+    """The same circuit with both edges moved ``margin_m`` metres inwards (WP48).
+
+    Why: an imported circuit's edges sit about at the white lines; just beyond them the
+    game has kerbs and, at some chicanes, raised "sausage" bumps. Our simulator has a
+    flat road and no kerbs, so a driver trained to use every centimetre rides those
+    bumps when its lap is played in the game, and the car is thrown in the air. A margin
+    keeps the wheels off them. Each half-width stays at least ``min_half_width_m``.
+    """
+    if margin_m <= 0:
+        return track
+    from mv.track.track import Track
+    wl = np.maximum(np.asarray(track.w_left, float) - margin_m, min_half_width_m)
+    wr = np.maximum(np.asarray(track.w_right, float) - margin_m, min_half_width_m)
+    meta = dict(track.meta or {})
+    meta["edge_margin_m"] = float(margin_m)
+    return Track.from_centerline(track.xy, wl, wr, ds=track.ds, name=track.name, meta=meta)
 
 
 def load_sets(path: Path | None = None) -> dict[str, list[str]]:

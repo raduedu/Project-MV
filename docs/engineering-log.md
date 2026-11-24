@@ -1933,3 +1933,34 @@ test `test_fs_car_is_drawn_with_our_own_generic_model` (stand-in table, Lua wiri
 names in the model). 175 tests pass. **Not seen in the game**: drawing speed (~3 500 vertices per
 pass from Lua), whether the shadow pass accepts immediate-mode drawing, and colour brightness are
 the open questions.
+
+## WP48 — "It jumped from a bumper at a chicane": laps kept off the game's kerbs 🕓 (fix in place; FS driver training with it)
+
+**Owner's in-game test (2026-11-24 15:41).** The FS lap at Monza with the new model (WP47): "really
+good, but it skipped over a chicane basically (jumped from a bumper)". It was the FS car's
+*physics-perfect* lap, not a trained driver.
+
+**Root cause.** Our circuits are flat roads with edges at about the white lines: measured against
+Verstappen's 2023 Monza lap, he runs up to 1.7 m *beyond* our edges (on the kerbs) in four of five
+corner groups, so the edges are not too wide. The perfect lap uses all of that width for a 1.42 m
+wide FS car (0.2 m buffer). In the game, however, the car that is moved is the 1.73 m wide Tatuus
+stand-in, pushed by forces with some following error in quick direction changes - its wheels reach
+the kerbs and the raised bumps behind them, which our simulator does not have, and the game's
+physics throws it in the air.
+
+**Fix.**
+1. Playback laps keep clear of the kerbs: the FS Monza lap was recomputed with the line kept the
+   stand-in's half width + 0.6 m from the edges: **2:31.787** (full width 2:31.194, +0.4 %);
+   `personal/demos/view_fs_monza.cmd` plays it.
+2. `mv.track.sets.narrowed` + `train.py --track-margin M`: imported circuits' edges moved M metres
+   inwards in training and validation (half-width never below 2 m). Test
+   `test_track_margin_moves_both_edges_inwards`. This is a track limit, not timidity: the driver
+   still drives at the limit of the (slightly narrower) circuit, as a real driver respects the
+   bumps the game has and our road does not.
+3. Owner: "train it a bit longer; put other things on pause until it works flawlessly". The plan was
+   paused and reordered: `fs_v4_circuits` now runs **alone** on the GPU, extended to 3 h, resumed with
+   `--track-margin 0.6`; `fs_v3_zigzag` (70 %), `multi_v7_racing`, `f1_ver_v1`, `multi_v6_mid2` wait
+   behind it in lane 1 (lane 2 empty - to be split into two lanes again once the FS driver is done).
+
+**Next.** When the FS driver laps Monza cleanly in validation: record its lap for the game; check in
+the game that no bump is hit; make the margin the default for runs whose laps are shown in the game.

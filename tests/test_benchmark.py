@@ -88,3 +88,15 @@ def test_track_sets_hold_circuits_out_of_training(tmp_path):
         trainable_names("a,x", local, sets)                      # not imported
     empty = load_sets(tmp_path / "missing.yaml")
     assert validation_names(local, empty) == ["a", "b", "c", "d"]
+
+
+def test_track_margin_moves_both_edges_inwards(track):
+    """WP48: imported circuits can be narrowed for training, so laps stay off the game's kerbs."""
+    from mv.track.sets import narrowed
+    n = narrowed(track, 0.6)
+    assert n.name == track.name and n.meta["edge_margin_m"] == 0.6
+    assert abs(n.length - track.length) < 0.01 * track.length          # same centre line
+    wide = (track.w_left > 2.7) & (track.w_right > 2.7)
+    assert np.allclose(n.w_left[wide], track.w_left[wide] - 0.6, atol=0.05)
+    assert np.all(n.w_left >= 2.0 - 1e-9) and np.all(n.w_right >= 2.0 - 1e-9)   # never narrower than 4 m
+    assert narrowed(track, 0.0) is track

@@ -48,7 +48,7 @@ from mv.rl.pretrain import warm_start  # noqa: E402
 from mv.control.scripted import ScriptedDriver  # noqa: E402
 from mv.track.generator import max_length_m, random_track, random_tracks  # noqa: E402
 from mv.track.track import Track, TrackBatch  # noqa: E402
-from mv.track.sets import trainable_names, validation_names  # noqa: E402
+from mv.track.sets import narrowed, trainable_names, validation_names  # noqa: E402
 from mv.vehicle.params import find_vehicle, load_vehicle  # noqa: E402
 
 
@@ -74,14 +74,14 @@ def resolve_cars(spec: str) -> list[str]:
     return [i for i in out if i not in drop]
 
 
-def validation_tracks(preset: str, count: int) -> list[Track]:
+def validation_tracks(preset: str, count: int, margin_m: float = 0.0) -> list[Track]:
     """Fixed random circuits (seed never used in training) + imported real circuits."""
     tracks = random_tracks(count, seed=987_654, cfg=preset)
     for i, t in enumerate(tracks):
         t.name = f"val_random_{i}"
     local = ROOT / "tracks" / "local"
     if not preset.startswith("fs") and local.is_dir():          # real circuits only for full-size cars
-        tracks += [Track.load(local / f"{n}.npz") for n in validation_names(local)]   # tracks/sets.yaml
+        tracks += [narrowed(Track.load(local / f"{n}.npz"), margin_m) for n in validation_names(local)]   # tracks/sets.yaml
     return tracks
 
 
@@ -203,6 +203,9 @@ def main() -> None:
     ap.add_argument("--real-tracks", default="",
                     help="also train on imported real circuits: 'all' or comma-separated names; circuits held out in "
                          "tracks/sets.yaml (never_train) are always excluded (engineering log WP42)")
+    ap.add_argument("--track-margin", type=float, default=0.0,
+                    help="metres: move the edges of imported real circuits inwards (training and validation), "
+                         "so laps stay off the game's kerbs and bumps when played in Assetto Corsa (log WP48)")
     ap.add_argument("--real-share", type=float, default=0.25,
                     help="with --real-tracks: share of the training pool that is real circuits (they are repeated "
                          "to reach it and are never replaced by the refresh)")
@@ -286,7 +289,7 @@ def main() -> None:
     n_generated = len(pool)                       # ids >= n_generated are real circuits: never refreshed
     if args.real_tracks:
         names = trainable_names(args.real_tracks)
-        real = [Track.load(ROOT / "tracks" / "local" / f"{n}.npz") for n in names]
+        real = [narrowed(Track.load(ROOT / "tracks" / "local" / f"{n}.npz"), args.track_margin) for n in names]
         # repeat them so they make up about --real-share of the pool (each car picks a pool entry at random)
         copies = max(1, round(args.real_share / max(1e-6, 1 - args.real_share) * n_generated / max(len(real), 1)))
         pool += [t for t in real for _ in range(copies)]
@@ -301,7 +304,7 @@ def main() -> None:
         env = MultiCarEnv(vps, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
         args.envs = env.n
     ppo = PPO(env, ppo_cfg)
-    val = validation_tracks(args.val_preset or args.preset.split("+")[0], args.val_tracks)
+    val = validation_tracks(args.val_preset or args.preset.split("+")[0], args.val_tracks, args.track_margin)
     best_score, it0 = -1e9, 0
     if args.resume and (run / "latest.pt").is_file():
         ck = ppo.load(run / "latest.pt")
