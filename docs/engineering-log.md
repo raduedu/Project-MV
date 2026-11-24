@@ -2126,3 +2126,5 @@ owner asked, Monza 0.6 m as before), plus up to 0.5 m in corners above 1.5 g (0 
 **3:04.769** (extra room on 29 % of the lap; uniform 0.2 m was 3:03.992); Monza: **2:32.330** (19 %;
 uniform 0.6 m 2:31.787). Script `personal/tools/fs_demo_lap.py <track> [base]` (owner's folder);
 launchers updated.
+
+**Addendum (owner, 17:13).** Monza base margin 0.2-0.3 m is fine ("my only complaint was the suspension"): recomputed with **0.3 m** + the same extra room: **2:32.068**; launcher updated.
