@@ -2028,3 +2028,22 @@ applies it once per lap load and logs what it found. Our drawn model stays avail
 (`draw: fs_generic`). Not covered: the driver figure's suit and helmet (the game's generic driver).
 
 **Verification.** Lua parses; payload checked for the Spa FS lap; 177 tests pass. Not seen in the game.
+
+## WP53 — Owner's run: car stayed in the pits, names still on the car 🕓 (fixed offline; in-game check by the owner)
+
+**Owner (16:19, screenshot of the session menu).** The Tatuus did not move from the pits and still had
+its names; "repaint it fully in black".
+
+**Root cause (CSP log).** From the first frame the app stopped with *mv_viewer.lua:169: attempt to
+compare number with thread* - inside the binary search that finds a moment of the lap - every frame.
+So the lap never started (car stayed put) and the repaint, called later in the same frame, never ran.
+Which value became a Lua "thread" could not be found offline: every path traced is a number (lap
+samples copied from shared memory, the follower's clock, the seek time) and no Lua interpreter is
+available here to reproduce it.
+
+**Fix.** (1) Values entering the search are forced to numbers (`num()`), lap samples are converted
+when copied from shared memory, and the follower's clock is checked; the first bad value is logged
+once with its type - the next run's log names the source. (2) The repaint runs first in every frame,
+so nothing later can stop it. (3) Fully black: body (`RT_Skin`), headrest (`RT_COCKPIT_protezione`),
+details and mechanical parts (`RT_DETAILS`, `RT_MECH_PARTS`) near-black, decals hidden, tyre
+sidewalls black (payload 128 of 159 bytes).

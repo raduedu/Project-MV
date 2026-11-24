@@ -152,21 +152,38 @@ local function copyArrays(prefix, fields, n)
   for _, f in ipairs(fields) do
     local src = data[prefix .. f]
     local t = {}
-    for i = 0, n - 1 do t[i + 1] = src[i] end
+    for i = 0, n - 1 do t[i + 1] = tonumber(src[i]) or 0 end
     out[f] = t
   end
   return out
 end
 
 -- index i with t[i] <= time < t[i+1] (binary search), and the fraction between them
+-- WP53: the owner's run stopped here every frame with "attempt to compare number with thread" (cause not
+-- found offline), so the car never left the pits. Inputs are now forced to numbers; the first bad value
+-- is reported once with its type, so the log shows where it came from.
+local badValueSeen = false
+local function num(v, what)
+  local x = tonumber(v)
+  if x == nil or x ~= x then
+    if not badValueSeen then
+      badValueSeen = true
+      ac.log('mv_viewer: non-number ' .. what .. ' (' .. type(v) .. ': ' .. tostring(v) .. ')')
+    end
+    return 0
+  end
+  return x
+end
+
 local function locate(arr, time)
-  local t, n = arr.t, arr.n
+  time = num(time, 'time')
+  local t, n = arr.t, num(arr.n, 'sample count')
   if time <= t[1] then return 1, 0 end
   if time >= t[n] then return n - 1, 1 end
   local lo, hi = 1, n
   while hi - lo > 1 do
     local mid = math.floor((lo + hi) / 2)
-    if t[mid] <= time then lo = mid else hi = mid end
+    if num(t[mid], 'sample time') <= time then lo = mid else hi = mid end
   end
   local span = t[hi] - t[lo]
   return lo, span > 0 and (time - t[lo]) / span or 0
@@ -592,6 +609,8 @@ end
 local function tick(dt)
   frame = frame + 1
   tryLoad()
+  local rpOk, rpErr = pcall(applyRepaint)                 -- first: nothing later in the frame can stop it
+  if not rpOk then ac.log('mv_viewer repaint: ' .. tostring(rpErr)) end
   local allowed = physics.allowed()
   if lap and allowed then startWorker() end
   handleCommand()
@@ -609,7 +628,7 @@ local function tick(dt)
       follow.speed = speed
       follow.stiffness = stiffness
       follow.active = 1
-      playT = follow.t
+      playT = num(follow.t, 'follower clock')
       if follow.atEnd == 1 then
         if loop then seek(0) else playing = false end
       elseif follow.posErr > 15 then                       -- crashed / stuck: put it back on the lap
@@ -645,8 +664,6 @@ local function tick(dt)
     if lap then status = sim.isPaused and 'game paused' or 'stopped - press Play' end
   end
   pcall(updateGhost)
-  local rpOk, rpErr = pcall(applyRepaint)
-  if not rpOk then ac.log('mv_viewer repaint: ' .. tostring(rpErr)) end
   local fsOkTick, fsErr = pcall(fsTick, dt)
   if not fsOkTick then ac.log('mv_viewer FS: ' .. tostring(fsErr)) end
 

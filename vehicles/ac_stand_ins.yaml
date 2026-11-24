@@ -17,7 +17,9 @@ stand_ins:
   # "hide" = not drawn. Nothing in the game's files changes; the repaint lasts for that session only.
   fs_generic_ev:
     car: tatuusfa1
-    repaint: {RT_Skin: e8eaee, RT_Decals: hide, RT_Tire_Side: 141416}
+    # fully black (owner, 16:19): body, headrest, details and mechanical parts; decals hidden
+    repaint: {RT_Skin: 101012, RT_COCKPIT_protezione: 101012, RT_DETAILS: 18181a, RT_MECH_PARTS: 18181a,
+              RT_Decals: hide, RT_Tire_Side: 141416}
   porsche_taycan_turbo_gt_weissach: ks_porsche_panamera # Taycan (electric) -> Panamera, nearest Porsche four-door shape
   porsche_911_gt3_rs_992: ks_porsche_911_gt3_rs         # public-data 992 -> the game's 991 GT3 RS
   porsche_918_spyder: ks_porsche_918_spyder             # public-data 918 Weissach -> the game's 918
