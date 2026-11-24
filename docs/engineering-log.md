@@ -1993,3 +1993,18 @@ of zero length), with the Tatuus visible instead of the FS model.
    **Not proven** to be the cause - if the error returns, it is not the upkeep.
 
 Lua parses; viewer tests 12/12.
+
+## WP51 — FS model sunk into the road 🕓 (fixed offline; in-game check by the owner)
+
+**Owner (16:07, screenshot at Spa, driver's camera).** "It's in the ground." Only the red nose stripe
+(looking pink) lay flat on the asphalt and the white cockpit edge showed at the bottom - the rest of
+the model was below the road surface, ~0.45 m too low.
+
+**Root cause.** The model's origin is on the ground; it was placed at the car's physics point minus
+the "ride height" the app measures while the car stands still. For the Tatuus that value was wrong
+or not yet measured when playback started (default 0.5 m; the Tatuus' centre of gravity is ~0.3 m
+up). (The run before, at Monza, never drew the model at all - WP50 - so the "open cockpit" seen there
+was the Tatuus itself.) **Fix:** the road surface under the car is found by a ray every frame
+(`groundY`, the same as the ghost uses) and the model stands on it; the old offset is only a
+fallback. The red accent was bluish (0.84, 0, 0.11) and read as pink in the game's colour grading:
+now (0.80, 0.03, 0.02).

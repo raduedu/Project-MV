@@ -463,7 +463,7 @@ end
 -- for physics and cameras) is hidden and our own unbranded FS model (mv_fsmodel.lua) is drawn on it.
 local fsOk, fsModel = pcall(require, 'mv_fsmodel')
 if not fsOk then ac.log('mv_viewer: FS model not available: ' .. tostring(fsModel)) end
-local fsState = { spin = 0, ghostSpin = 0, hidden = false, broken = nil }
+local fsState = { spin = 0, ghostSpin = 0, hidden = false, broken = nil, normal = vec3(0, 1, 0) }
 local FS_MAX_STEER = math.rad(26)            -- front-wheel lock of vehicles/library/fs_generic_ev.yaml
 
 -- (if drawing it ever fails, `broken` switches it off and the stand-in is shown again - never an invisible car)
@@ -493,7 +493,12 @@ local function drawFSCar()
   -- (first in-game run: "attempt to write to constant location", model switched off)
   local u = vec3(car.up.x, car.up.y, car.up.z)
   local f = vec3(car.look.x, car.look.y, car.look.z)
-  local pose = { o = vec3(car.position.x, car.position.y, car.position.z) - u * rideHeight, r = f:cross(u, vec3()), u = u, f = f }
+  -- on the road surface right under the car, found by a ray every frame (WP51: placing it a measured
+  -- "ride height" below the car's centre sank it ~0.5 m into the road when that height was wrong/unmeasured)
+  local p = car.position
+  local gy = groundY(p.x, p.z, p.y, fsState.normal)
+  if not gy or gy ~= gy or math.abs(gy - p.y) > 2 then gy = p.y - rideHeight end   -- no road found: old way
+  local pose = { o = vec3(p.x, gy, p.z), r = f:cross(u, vec3()), u = u, f = f }
   local cs = sample(lap.car, playT, { 'steer' })
   render.setBlendMode(render.BlendMode.Opaque)
   render.setDepthMode(render.DepthMode.Normal)
