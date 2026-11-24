@@ -1461,3 +1461,30 @@ in width (e.g. 768-512-256). Running to completion to see whether it recovers.
 **Consequence.** `multi_v5_gearbox` (WP36) was re-based before it started: it now continues the
 normal-size control driver (`multi_v4_ctrl/latest.pt`) instead of the big network's best
 checkpoint, so the gearbox test starts from a strong driver.
+
+## WP39 — See-through ghost, drawn by the app 🕓 (offline checks; in-game check by the owner)
+
+**Owner (2026-11-24).** The ghost car is still not translucent.
+
+**Root cause.** WP34/35 loaded the car's model (.kn5) a second time and switched its meshes to
+transparent/additive blending with dimmed materials. The mesh search did match (`'?'` is CSP's
+documented "everything" filter), but the car's own shaders ignore these overrides, so the copy
+stayed solid.
+
+**Approach.** Do what CSP's own debug app does for its see-through cars
+(`extension/internal/lua-apps/CspDebug`, collider view): draw the mesh ourselves with
+`render.mesh` in the transparent pass, alpha blending and a small shader. Mesh: CSP's simplified
+car shape `ac.SimpleMesh.carShape(0)` (no model loading at all). Shader: alpha and brightness
+grow towards a surface's silhouette (`1 - |normal . view|`, squared), blue, scaled by the scene's
+white point - a "hologram" that shows the car's shape while staying see-through; depth is
+read but not written, so walls and the real car hide it. Placement: the real car's visual
+transform (`car.bodyTransform`) relative to the road, measured at rest, is applied to the ghost
+pose (no floating). Window: ghost opacity slider. If drawing fails, the old footprint marker
+appears instead.
+
+**Risk noted.** CSP halts the whole app if a custom shader fails to compile (no Lua error to
+catch). The shader therefore uses only inputs CSP's own shipped script uses on this version
+(`pin.NormalW`, `pin.PosC`, `gWhiteRefPoint`) plus two of our values.
+
+**Verification (offline).** Lua parses; no unknown names; viewer tests updated (9 pass, 140 in
+total). Not seen in the game yet.

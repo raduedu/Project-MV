@@ -16,8 +16,8 @@
       or if it ends up far from the lap (crash). Steering, pedals and gears follow the recording.
     * "teleport" mode (fallback if the physics worker cannot start): the car is placed on the
       recorded pose every frame (WP32/33); works, but the picture is less smooth.
-    * The ghost (ideal lap) is the car's own 3D model loaded a second time, see-through with a blue
-      glow, moved only visually - it has no physics and cannot touch anything.
+    * The ghost (ideal lap) is drawn by this app: CSP's simplified 3D shape of the car with a
+      see-through blue "hologram" shader (WP39), moved only visually - no physics, cannot touch anything.
 
   Frames: AC x = map_x, AC z = -map_y; heading yaw -> AC direction (cos yaw, 0, -sin yaw).
   Steering: +1 = left in our files, AC's steer is +1 = right: negated once, here.
@@ -117,7 +117,7 @@ local frame = 0
 local gap = 0
 local ghostIdx = 1
 local heights = {}           -- ghost sample index -> road height (racing line drawing)
-local options = { ghost = true, racingLine = true, lineAheadM = 450 }
+local options = { ghost = true, ghostOpacity = 0.6, racingLine = true, lineAheadM = 450 }
 local controls = nil
 local savedAutoShift = nil
 local rideHeight = 0.5       -- car reference point above the road (m), measured at rest
@@ -131,7 +131,8 @@ local lastSteps, lastStepsChange = -1, 0
 -- gears
 local shift = nil            -- {target, t0, lastPulse} while a gear change is in progress (applyInputs)
 -- ghost model
-local ghostNode, ghostModel, ghostTried = nil, nil, false
+local ghostTransform = nil   -- mat4x4: where the ghost car is drawn this frame (nil = not shown)
+local ghostMesh = nil        -- ac.SimpleMesh.carShape(0): CSP's simplified 3D shape of this car
 
 -- ------------------------------------------------------------------ helpers
 local function readString(field, len)
@@ -215,8 +216,8 @@ local function measureRideHeight()
     local ground = groundY(car.position.x, car.position.z, car.position.y)
     local h = car.position.y - ground
     if h > 0.05 and h < 1.5 then rideHeight = h end
-    local ok, m = pcall(function() return ac.findNodes('carRoot:0'):getWorldTransformationRaw() end)
-    if ok and m then
+    local m = car.bodyTransform                            -- the transform applied to the car's 3D model
+    if m then
       local mh = m.position.y - ground
       if mh > -0.5 and mh < 1.5 then modelHeight = mh end
       local mf = (m.position - car.position):dot(car.look)
@@ -333,48 +334,48 @@ local function seek(T)
   ghostIdx = 1
 end
 
--- ------------------------------------------------------------------ the ghost: see-through car model
-local function ensureGhostModel()
-  if ghostTried or not lap or lap.model == '' then return end
-  ghostTried = true
-  local ok, err = pcall(function()
-    ghostNode = ac.findNodes('carsRoot:yes'):createBoundingSphereNode('mvViewerGhost', 6)
-    ghostModel = ghostNode and ghostNode:loadKN5(lap.model)
-    if ghostModel then
-      ghostModel:setShadows(false)
-      ghostModel:excludeFromCubemap(true)
-      ghostModel:excludeFromSecondary(true)
-      -- see-through must be set on the MESHES (WP34 set it on the node: no effect, the ghost was solid)
-      for _, meshes in ipairs({ ghostModel:findMeshes('?'), ghostModel:findSkinnedMeshes('?') }) do
-        if meshes and #meshes > 0 then
-          meshes:setTransparent(true)
-          meshes:setBlendMode(render.BlendMode.BlendAdd)        -- additive: see-through, glowing
-          pcall(function() meshes:setMaterialProperty('ksDiffuse', 0.18) end)   -- faint body ...
-          pcall(function() meshes:setMaterialProperty('ksAmbient', 0.12) end)
-          pcall(function() meshes:setMaterialProperty('ksEmissive', rgb(0.05, 0.2, 0.5)) end)  -- ... blue glow
-          meshes:setShadows(false)
-        end
-      end
-    end
-  end)
-  if not ok then ac.log('mv_viewer ghost model: ' .. tostring(err)); ghostModel = nil end
-end
-
+-- ------------------------------------------------------------------ the ghost: see-through car
+-- WP39: loading the car model a second time and switching its materials to blending did not make it
+-- see-through in the game (the car's own shaders ignore that). Now the app draws the ghost itself,
+-- the way CSP's own debug app draws see-through cars: CSP's simplified 3D shape of the car
+-- (ac.SimpleMesh.carShape) with a small shader in the transparent pass - faint where you look straight
+-- at a surface, brighter towards its edges (a blue "hologram"), and hidden behind walls like a real car.
 local ghostNormal = vec3(0, 1, 0)
 local ghostGround = nil
 
 local function updateGhost()
-  local show = ghostModel ~= nil and options.ghost and active and lap and lap.ghost ~= nil
-  if ghostNode then ghostNode:setVisible(show and true or false) end
-  if not show then return end
+  ghostTransform = nil
+  if not (options.ghost and active and lap and lap.ghost) then return end
   local gs = sample(lap.ghost, playT, { 'x', 'y', 'yaw' })
   ghostGround = groundY(gs.x, -gs.y, ghostGround or lastGround or car.position.y, ghostNormal)
   local look = worldDir(gs.yaw)
   local up = ghostNormal:length() > 0.5 and ghostNormal or vec3(0, 1, 0)
   look = (look - up * look:dot(up)):normalize()            -- follow the road's slope (Eau Rouge)
-  -- the model's origin where the real car's model origin would be: on the road, not at the CG
-  ghostNode:setPosition(vec3(gs.x, ghostGround, -gs.y) + up * modelHeight + look * modelForward)
-  ghostNode:setOrientation(look, up)
+  -- placed where the real car's 3D model would be: on the road, not at the centre of gravity
+  ghostTransform = mat4x4.look(vec3(gs.x, ghostGround, -gs.y) + up * modelHeight + look * modelForward, look, up)
+end
+
+-- one table reused every frame (CSP: never add new values later - that would recompile the shader)
+local ghostDraw = {
+  mesh = nil, transform = nil, async = true, textures = {},
+  values = { gColor = rgbm(0.25, 0.6, 1.0, 1.0), gOpacity = 0.6 },
+  shader = [[float4 main(PS_IN pin) {
+    float g = dot(normalize(pin.NormalW), normalize(pin.PosC));
+    float edge = pow(1 - abs(g), 2);
+    return float4(gColor.rgb * gWhiteRefPoint * (0.5 + edge), saturate(0.15 + 0.6 * edge) * gOpacity);
+  }]],
+}
+
+local function drawGhostCar()
+  if not ghostTransform then return false end
+  ghostMesh = ghostMesh or ac.SimpleMesh.carShape(0, false)
+  ghostDraw.mesh, ghostDraw.transform = ghostMesh, ghostTransform
+  ghostDraw.values.gOpacity = options.ghostOpacity
+  render.setBlendMode(render.BlendMode.AlphaBlend)
+  render.setDepthMode(render.DepthMode.ReadOnlyLessEqual)  -- behind walls it is hidden, like a real car
+  render.setCullMode(render.CullMode.None)
+  render.mesh(ghostDraw)
+  return true
 end
 
 -- Time gap: when did the ghost pass the point where our car is now? (search near the last match)
@@ -413,10 +414,6 @@ local function tryLoad()
   }
   local id = data.lap_id
   if data.seq ~= s1 then return end
-  if lap and l.model ~= lap.model then                     -- another car: load its model next time
-    if ghostNode then pcall(function() ghostNode:dispose() end) end
-    ghostNode, ghostModel, ghostTried = nil, nil, false
-  end
   lap, lapId = l, id
   playT, ghostIdx, heights, lastGround, ghostGround = 0, 1, {}, nil, nil
   if not active then pcall(measureRideHeight) end
@@ -461,7 +458,6 @@ local function tick(dt)
   tryLoad()
   local allowed = physics.allowed()
   if lap and allowed then startWorker() end
-  if lap then ensureGhostModel() end
   handleCommand()
 
   if followMode() and follow.active == 1 then              -- worker alive? (heartbeat)
@@ -522,7 +518,7 @@ local function tick(dt)
   st.playing = playing and 1 or 0
   st.physics_allowed = allowed and 1 or 0
   st.cars_count = sim.carsCount or 1
-  st.ghost_is_car = (ghostModel ~= nil) and 1 or 0       -- (v3: 1 = ghost shown as the see-through car model)
+  st.ghost_is_car = (ghostTransform ~= nil) and 1 or 0   -- (1 = ghost drawn as the see-through car, WP39)
   st.play_time = playT
   st.gap_s = gap
   st.seq = (s + 2) % U32
@@ -569,7 +565,13 @@ local function draw()
       if i == ghostIdx then break end
     end
   end
-  if options.ghost and not ghostModel then                 -- no model: a footprint marker instead
+  local carDrawn = false
+  if options.ghost then
+    local ok, res = pcall(drawGhostCar)
+    carDrawn = ok and res
+    if not ok then ac.log('mv_viewer ghost car: ' .. tostring(res)) end
+  end
+  if options.ghost and not carDrawn then                   -- ghost car not available: a footprint marker
     local gs = sample(gh, playT, { 'x', 'y', 'yaw' })
     local f = worldDir(gs.yaw)
     local l = vec3(-f.z, 0, f.x)
@@ -617,6 +619,8 @@ function script.windowMain(dt)
     local k, kChanged = ui.slider('##stiff', stiffness, 0.3, 3.0, 'follow stiffness %.1f')
     if kChanged then stiffness = k end
     if ui.checkbox('Ghost (see-through car)', options.ghost) then options.ghost = not options.ghost end
+    local o, oChanged = ui.slider('##ghostop', options.ghostOpacity, 0.1, 1.0, 'ghost opacity %.2f')
+    if oChanged then options.ghostOpacity = o end
     if ui.checkbox('Ghost racing line', options.racingLine) then options.racingLine = not options.racingLine end
     if ui.checkbox('Loop', loop) then loop = not loop end
   end

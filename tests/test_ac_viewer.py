@@ -66,7 +66,8 @@ def test_lua_uses_the_documented_frames():
     assert "setEngineRPM" not in text
     # WP34: forces from a physics worker, ghost = see-through copy of the car model
     assert "physics.startPhysicsWorker, 'mv_follow'" in text and "physics.addForce" in worker
-    assert "loadKN5(lap.model)" in text and "setTransparent(true)" in text
+    assert "ac.SimpleMesh.carShape(0" in text and "render.mesh(ghostDraw)" in text   # WP39: drawn see-through
+    assert "render.BlendMode.AlphaBlend" in text and "pin.NormalW" in text
 
 
 def _payload(n=500, ghost=True):
