@@ -489,7 +489,7 @@ end
 
 local function drawFSCar()
   if not (fsMode() and active) then return end
-  -- copies: the game's car vectors are read-only, and vec3:cross(b) overwrites its own object unless an `out` is given
+  -- copies: the game's car vectors are read-only, and in CSP a cross product overwrites the vector it is called on unless an `out` is given
   -- (first in-game run: "attempt to write to constant location", model switched off)
   local u = vec3(car.up.x, car.up.y, car.up.z)
   local f = vec3(car.look.x, car.look.y, car.look.z)
