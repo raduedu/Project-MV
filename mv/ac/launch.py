@@ -35,7 +35,7 @@ import time
 import uuid
 from pathlib import Path
 
-__all__ = ["documents_dir", "race_ini_path", "ac_ids_for_lap", "car_skins", "build_race_ini", "write_race_ini",
+__all__ = ["documents_dir", "race_ini_path", "ac_ids_for_lap", "stand_in_for", "car_skins", "build_race_ini", "write_race_ini",
            "game_running", "steam_running", "running_session", "start_game", "open_lap_in_game", "watch_game", "BACKUP_DIR"]
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,10 +83,47 @@ def ac_ids_for_lap(meta: dict) -> tuple[str, str, str]:
         if vp:
             break
     m = re.search(r"Assetto Corsa car '([^']+)'", (vp.source if vp else "") or "")
-    if not m:
-        raise ValueError(f"'{meta['car']}' is not a car from Assetto Corsa (its file was built from public data), "
-                         "so the game cannot show it - choose a lap of an imported car")
-    return m.group(1), str(tm.get("track") or meta["track"]), str(tm.get("layout") or "")
+    car_id = m.group(1) if m else None
+    for cid in ([] if car_id else car_ids_of(meta, vp)):     # file id first: a car's display name may differ
+        car_id = stand_in_for(cid, ac_root=None)
+        if car_id:
+            break
+    if not car_id:
+        raise ValueError(f"'{meta['car']}' is not a car from Assetto Corsa (its file was built from public data) "
+                         "and vehicles/ac_stand_ins.yaml names no installed game car to show it with")
+    return car_id, str(tm.get("track") or meta["track"]), str(tm.get("layout") or "")
+
+
+def car_ids_of(meta: dict, vp=None) -> list[str]:
+    """Names a lap's car may be listed under: its car file's id, the lap's car name, the file's name field."""
+    out = []
+    if meta.get("car_file"):
+        out.append(Path(str(meta["car_file"])).stem)
+    out += [n for n in (meta.get("car"), getattr(vp, "name", None)) if n and n not in out]
+    return out
+
+
+def stand_in_for(car: str, ac_root=None) -> str | None:
+    """The installed game car that shows a car file the game does not have (vehicles/ac_stand_ins.yaml).
+
+    Example: our Formula Student electric car has no counterpart in Assetto Corsa; the
+    Tatuus FA1 single-seater body is shown instead (WP46). None if nothing is listed or
+    the listed car is not installed.
+    """
+    import yaml
+    f = ROOT / "vehicles" / "ac_stand_ins.yaml"
+    if not f.is_file():
+        return None
+    table = (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("stand_ins") or {}
+    sid = table.get(car)
+    if not sid:
+        return None
+    try:
+        from mv.ac.paths import find_ac_root
+        root = Path(ac_root) if ac_root else find_ac_root()
+    except Exception:
+        return sid                       # no game found here: let the caller fail later with a clear message
+    return sid if (root / "content" / "cars" / sid).is_dir() else None
 
 
 def car_skins(ac_root: Path, car_id: str) -> list[str]:

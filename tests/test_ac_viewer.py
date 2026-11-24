@@ -272,3 +272,29 @@ def test_exit_watchdog_ends_only_a_game_that_hangs_after_a_clean_exit(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_stand_in_body_for_cars_the_game_does_not_have(tmp_path):
+    """WP46: a car file with no counterpart in the game (the FS electric car) is shown with the body
+    listed in vehicles/ac_stand_ins.yaml - only if that car is installed - and the gears follow the
+    stand-in's own gearbox: high revs, never over the limiter, one gear at a time, no hunting."""
+    from mv.ac.launch import stand_in_for
+    from mv.ac.viewer_link import engine_rpm, stand_in_gears
+    from mv.vehicle.params import find_vehicle, load_vehicle
+
+    (tmp_path / "content" / "cars" / "tatuusfa1").mkdir(parents=True)
+    assert stand_in_for("fs_generic_ev", ac_root=tmp_path) == "tatuusfa1"
+    assert stand_in_for("porsche_taycan_turbo_gt_weissach", ac_root=tmp_path) is None   # Panamera not installed here
+    assert stand_in_for("no_such_car", ac_root=tmp_path) is None
+
+    body = load_vehicle(find_vehicle("porsche_911_gt3_rs_992"))      # any multi-gear car file from the library
+    t = np.arange(0.0, 40.0, 0.04)
+    v = 10.0 + 30.0 * (1 - np.cos(t / 40.0 * 2 * np.pi)) / 2           # 36 -> 144 -> 36 km/h
+    g = stand_in_gears(t, v, body)
+    rpm = engine_rpm(v, g, body)
+    u = next(u for u in body.powertrain.units if u.kind == "ice")
+    assert g.min() >= 1 and np.all(np.abs(np.diff(g)) <= 1)           # one gear at a time
+    changes = np.flatnonzero(np.diff(g))
+    assert np.all(np.diff(t[changes + 1]) >= 0.6 - 1e-9)              # held at least 0.6 s
+    assert rpm.max() < u.rpm_max                                      # never on the limiter
+    assert g[np.argmax(v)] > g[0]                                     # up through the gears and back down

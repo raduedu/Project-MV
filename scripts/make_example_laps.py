@@ -98,8 +98,12 @@ def write_index() -> None:
     print(f"wrote docs/laps/index.json ({len(items)} laps) and docs/replay.js")
 
 
-def render_gif(lap: dict, ghost: dict, out: Path, seconds: float = 16.0, speedup: float = 3.0, fps: int = 12) -> None:
-    """Animated replay: track map (line coloured by speed), chase camera, and a small dashboard."""
+def render_gif(lap: dict, ghost: dict | None, out: Path, seconds: float = 16.0, speedup: float = 3.0, fps: int = 12,
+               subtitle: str | None = None, names: tuple[str, str] = ("driver", "ideal")) -> None:
+    """Animated replay: track map (line coloured by speed), chase camera, and a small dashboard.
+
+    ``ghost`` may be None (no second car, no gap). ``subtitle`` replaces the default line under
+    the title; ``names`` label the car and the ghost in the dashboard."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -108,7 +112,8 @@ def render_gif(lap: dict, ghost: dict, out: Path, seconds: float = 16.0, speedup
     from matplotlib.patches import Polygon, Rectangle
 
     BG, INK, MUTED, RED = "#14171c", "#e6e9ef", "#98a1b3", "#d5001c"
-    s, g, tk, m = lap["samples"], ghost["samples"], lap["track"], lap["meta"]
+    s, tk, m = lap["samples"], lap["track"], lap["meta"]
+    g = (ghost or lap)["samples"]                       # without a ghost: a hidden copy of the lap itself
     t, x, y, yaw, v = (np.asarray(s[k], float) for k in ("t", "x", "y", "yaw", "speed"))
     thr, brk, gear, steer = (np.asarray(s[k], float) for k in ("thr", "brk", "gear", "steer"))
     gt, gx, gy, gyaw = (np.asarray(g[k], float) for k in ("t", "x", "y", "yaw"))
@@ -128,7 +133,7 @@ def render_gif(lap: dict, ghost: dict, out: Path, seconds: float = 16.0, speedup
     ghost_dot, = ax.plot([], [], "o", ms=7, color="#a0aab9", mec="white")
     car_dot, = ax.plot([], [], "o", ms=9, color=RED, mec="white", mew=1.5)
     fig.text(0.015, 0.975, "Project MV", color=RED, fontsize=14, weight="bold", va="top")
-    fig.text(0.015, 0.905, f"{m['car']} - generated circuit, never seen in training", color=MUTED, fontsize=8, va="top")
+    fig.text(0.015, 0.905, subtitle or f"{m['car']} - generated circuit, never seen in training", color=MUTED, fontsize=8, va="top")
     # chase camera (heading up, 120 m across)
     W = 60.0
     cz.set_xlim(-W, W); cz.set_ylim(-0.75 * W, 1.25 * W)
@@ -148,8 +153,10 @@ def render_gif(lap: dict, ghost: dict, out: Path, seconds: float = 16.0, speedup
     hud.add_patch(Rectangle((0.15, 0.17), 0.8, 0.09, color="#2a3039")); hud.add_patch(Rectangle((0.15, 0.03), 0.8, 0.09, color="#2a3039"))
     b_thr = Rectangle((0.15, 0.17), 0.0, 0.09, color="#3fbf6f"); b_brk = Rectangle((0.15, 0.03), 0.0, 0.09, color="#e05a55")
     hud.add_patch(b_thr); hud.add_patch(b_brk)
-    hud.text(1.0, 0.98, f"driver {m['lap_time']:.3f} s   ideal {ghost['meta']['lap_time']:.3f} s   replay x{speedup:g}",
-             color=MUTED, fontsize=7, ha="right", va="top")
+    hud.text(1.0, 0.98, f"{names[0]} {m['lap_time']:.3f} s   " + (f"{names[1]} {ghost['meta']['lap_time']:.3f} s   " if ghost else "")
+             + f"replay x{speedup:g}", color=MUTED, fontsize=7, ha="right", va="top")
+    if ghost is None:
+        ghost_dot.set_visible(False); ghost_car.set_visible(False)
 
     def to_cam(px, py, cx, cy, h):
         dx, dy = px - cx, py - cy
@@ -178,7 +185,8 @@ def render_gif(lap: dict, ghost: dict, out: Path, seconds: float = 16.0, speedup
         gap = tt - np.interp(ss[i], gs, gt)
         h_time.set_text(f"{int(tt // 60)}:{tt % 60:06.3f}")
         h_speed.set_text(f"{v[i] * 3.6:4.0f} km/h")
-        h_gap.set_text(f"gap to ideal {gap:+.2f} s"); h_gap.set_color("#3fbf6f" if gap <= 0 else "#e05a55")
+        if ghost is not None:
+            h_gap.set_text(f"gap to {names[1]} {gap:+.2f} s"); h_gap.set_color("#3fbf6f" if gap <= 0 else "#e05a55")
         h_gear.set_text(f"gear {int(gear[i])}" if gear[i] else "")
         b_thr.set_width(0.8 * thr[i]); b_brk.set_width(0.8 * brk[i])
 

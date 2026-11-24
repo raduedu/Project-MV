@@ -512,3 +512,14 @@ supersedes it — do not edit history.*
 * **Why.** PPO judges actions with the critic; an expert actor with a newborn critic is pushed
   towards whatever the critic over-values - here speed. Copying is cheap (same mini-batches).
   Revises D-037's reading of the WP30 failure (step size); the KL stop stays as a safeguard.
+
+### D-041 — Cars the game does not have are shown with a stand-in body
+
+* **Context.** The owner wants to see the FS electric car in Assetto Corsa; the game has no FS car and
+  no electric car.
+* **Options.** (a) Refuse (as before). (b) Ask the owner to install a mod car. (c) Show the lap with an
+  installed car's body, chosen per car in a committed table.
+* **Decision.** (c), table `vehicles/ac_stand_ins.yaml`; (b) stays possible (an installed mod is
+  imported like any car and then needs no stand-in).
+* **Why.** The lap is ours either way (our physics, our driver); the game only draws it. Gears and mass
+  follow the stand-in so the game's own engine and the force follower behave sensibly.

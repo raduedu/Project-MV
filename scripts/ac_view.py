@@ -64,7 +64,7 @@ def main() -> int:
     key = a.key
     if a.best:
         car, track = a.best
-        cands = [m for m in viewable_laps() if track == m["track"] and car in (m["car"], m.get("car_file"))]
+        cands = [m for m in viewable_laps() if track == m["track"] and car in (m["car"], m.get("car_file"), Path(m.get("car_file") or "").stem)]
         if not cands:
             print(f"no saved lap of {car} at {track}")
             return 1

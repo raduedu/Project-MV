@@ -93,6 +93,7 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 | Train on real circuits too (some always held out) | add `--real-tracks all` to `scripts\train.py` (which circuits: `tracks/sets.yaml`) |
 | Train on many cars at once | `scripts\train.py --vehicle @favourites,@racing,-fs_generic_ev ...` (catalogue groups, see below) |
 | Race a real F1 lap in equal machinery | `scripts\f1_benchmark.py` (fetch, align, fit the car), then `scripts\f1_benchmark.py --race runs\<run>\best.pt` - private data, never committed (D-038, log WP43) |
+| Show a car the game does not have (e.g. the FS electric car) | it is drawn with a stand-in body from `vehicles/ac_stand_ins.yaml` (FS car -> Tatuus FA1); View in Assetto Corsa then works for its laps on imported circuits |
 | Run the tests | `-m pytest tests -q` |
 | Publish / update the private GitHub repo | `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` |
 

@@ -1831,3 +1831,63 @@ repeats `multi_v6_mid` with the fix.
 against his laps; check `multi_v6_mid2` does not collapse; owner decision on the driveline-loss
 question (WP41) - ideally one recorded lap in the game with `ac_drive.py --record` for a
 system-identification check; Indy car only if the owner installs one (none in the game).
+
+## WP46 — FS electric car on a real circuit, and in the game with a stand-in body 🕓 (perfect lap and offline checks done; FS driver training on real circuits queued; in-game check by the owner)
+
+**Owner (2026-11-24).** "Give me a small demo of the FS car - it doesn't seem to work in Assetto
+Corsa", then: "make one on a proper track, with the electric car model".
+
+**Why it could not work in the game.** `fs_generic_ev` is a car file built from typical Formula
+Student values, not a car in the owner's game, and FS laps were on generated cone-style circuits,
+which do not exist in the game either. "View in Assetto Corsa" refused both, by design.
+There is no electric car in the owner's game at all (checked against the WP41 catalogue: only
+hybrids).
+
+**Measured: the FS drivers cannot lap a real circuit yet.** Strict, 2 laps, 9 real circuits
+(Magione, Vallelunga club, Brands Hatch Indy/GP, Red Bull Ring national, Highlands short, Monza
+junior, Silverstone national, Imola): `fs_v2_vary/best` does not move off the line on any of them
+("stalled at 0 m"); `fs_v3_zigzag/best` (still training) goes off after 200-930 m on every one.
+Both have only ever seen narrow FS circuits; real circuits are 2-3x wider with long straights - far
+outside what they learnt. On generated FS circuits they are good: three never-seen circuits
+lapped cleanly at +1.8 / +2.3 / +2.4 % to the physics-perfect lap (demo animation
+`runs/demo/fs_demo.gif`).
+
+**Approach.**
+1. *Demo now:* the FS car's physics-perfect lap on real circuits. Compared on six small circuits
+   (minimum-curvature line): on most, an FS car is close to its 139 km/h top speed for 60-90 % of
+   the lap (Brands Hatch Indy: average 137 km/h) - not much to see. **Magione** is the most varied
+   (slowest corner 55 km/h, at top speed 59 % of the lap): perfect lap **1:12.095**, average
+   124.8 km/h (`runs/demo/fs_magione.gif`; lap file in the Laps tab).
+2. *In the game:* `vehicles/ac_stand_ins.yaml` (committed, ids only) names an installed game car
+   whose body shows a car file the game lacks: FS electric car -> **Tatuus FA1** (the closest
+   single-seater); Taycan -> Panamera; public-data 992 / 918 -> the game's 991 GT3 RS / 918.
+   `launch.stand_in_for`, used by `ac_ids_for_lap` when a car file has no game source. Because the
+   game runs the stand-in's own engine and gearbox, `viewer_payload` chooses gears for *its*
+   gearbox (`stand_in_gears`: lowest gear below 92 % of its limiter, one gear at a time, at least
+   0.6 s between changes) and gives the force follower *its* mass (552 kg) and yaw inertia. At
+   Magione: gears 1-4, engine below 6 000 rpm. The sound is the Tatuus' petrol engine - an electric
+   car cannot sound right in this game.
+3. *The real fix:* `fs_v4_circuits` (plan lane 1, before `multi_v7_racing`, 2 h): the FS driver
+   (from `fs_v3_zigzag/best`) trains on FS circuits + generated `complex` circuits + the 28
+   trainable real circuits (30 % of the pool), validated on the real circuits.
+
+**Verification.** `test_stand_in_body_for_cars_the_game_does_not_have` (stand-in only if installed;
+gears one at a time, held >= 0.6 s, never on the limiter); viewer tests 10/10. A lap must not be
+its own ghost: `find_ghost` now skips the lap itself (first version broke an older test that has
+laps without ids - fixed). `render_gif` (scripts/make_example_laps.py) now takes an optional ghost,
+a subtitle and labels.
+
+**Not verified:** the FS lap in the running game (owner's check).
+
+**Addendum (owner, same day): "use the normal driver, the zig-zag one, at Monza - just for myself".**
+The learned multi-car driver `multi_v5_zigzag` drives the electric Taycan at Monza cleanly: its
+saved strict validation lap **1:57.876** (update 450; 6.2 steering reversals/s, 296 km/h top) vs the
+physics-perfect 1:53.181; a fresh 4-lap run of `best.pt` gives 2:03.1 (standing), 1:58.40, 1:58.27,
+1:58.96. In the game the Taycan is shown with the **Panamera** body (gears 1-6 of its PDK, 4 300 -
+6 400 rpm, pushed with its 2 131 kg). Bug found on the way: a lap's car is stored under its display
+name ("Porsche Taycan Turbo GT Weissach"), not its file id, so neither the car file nor the stand-in
+was found (mass fell back to 1 400 kg, no rpm). Fix: `find_vehicle` accepts the project-relative
+`car_file` path, and stand-ins are looked up under the file id first (`launch.car_ids_of`);
+`ac_view.py --best` also matches the file id. New git-ignored folder **`personal/`** for the
+owner's own demos (also refused by `publish_github.ps1`): `personal/demos/view_taycan_monza.cmd`
+plays that lap in the game, `personal/demos/*.gif` are the animations.

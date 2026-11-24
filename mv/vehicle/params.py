@@ -274,6 +274,10 @@ def find_vehicle(name: str, root: str | Path | None = None) -> Path:
     root = Path(root) if root else Path(__file__).resolve().parents[2] / "vehicles"
     if Path(name).is_file():
         return Path(name)
+    if (root.parent / name).is_file():           # a path relative to the project, e.g. a lap's car_file
+        return root.parent / name
+    if name.endswith(".yaml"):
+        name = Path(name).stem
     for sub in ("local", "library"):
         p = root / sub / f"{name}.yaml"
         if p.is_file():

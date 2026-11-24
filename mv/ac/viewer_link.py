@@ -144,10 +144,49 @@ def engine_rpm(speed, gear, vp) -> np.ndarray:
     return np.minimum(rpm, u.rpm_max)
 
 
+def _stand_in_body(meta: dict, vp):
+    """Car file of the game car standing in for a non-game car, or None (normal case)."""
+    try:
+        from mv.ac.launch import ac_ids_for_lap, car_ids_of, stand_in_for
+        from mv.vehicle.params import find_vehicle, load_vehicle
+        sid = next((s for s in (stand_in_for(c) for c in car_ids_of(meta, vp)) if s), None)
+        if not sid or ac_ids_for_lap(meta)[0] != sid:
+            return None
+        return load_vehicle(find_vehicle(sid))
+    except Exception:
+        return None
+
+
+def stand_in_gears(t, speed, vp, hold_s: float = 0.6, rev_frac: float = 0.92) -> np.ndarray:
+    """Gears (1-based) a car would use along a speed trace: the lowest gear that keeps the engine
+    below ``rev_frac`` of its limiter (= high revs, strong pull), held at least ``hold_s`` seconds
+    between changes so the box does not hunt. Used when the game shows a stand-in body whose
+    gearbox differs from the car that drove the lap."""
+    pt = vp.powertrain
+    gb_key = next(iter(pt.gearboxes))
+    gb = pt.gearboxes[gb_key]
+    units = [u for u in pt.units if u.gearbox == gb_key]
+    u = next((u for u in units if u.kind == "ice"), units[0] if units else pt.units[0])
+    radius = u.front_frac * vp.tire_front.radius_m + (1 - u.front_frac) * vp.tire_rear.radius_m
+    ratios = np.asarray(gb.ratios, float) * gb.final_drive
+    t, v = np.asarray(t, float), np.asarray(speed, float)
+    rpm = v[:, None] / radius * ratios[None, :] * 30.0 / np.pi          # (samples, gears)
+    ok = rpm <= rev_frac * u.rpm_max
+    want = np.where(ok.any(1), ok.argmax(1), len(ratios) - 1) + 1
+    out = want.copy()
+    last_t = -1e9
+    for i in range(1, len(out)):
+        out[i] = out[i - 1]
+        if want[i] != out[i - 1] and t[i] - last_t >= hold_s:
+            out[i] = out[i - 1] + np.sign(want[i] - out[i - 1])        # one gear at a time, like a paddle shift
+            last_t = t[i]
+    return out.astype(float)
+
+
 def find_ghost(lap_meta: dict, laps: list[dict]) -> dict | None:
     """Meta of the physics reference lap for the same car and circuit (newest), or None."""
     refs = [m for m in laps if m.get("kind") == "reference" and m.get("car") == lap_meta.get("car")
-            and m.get("track") == lap_meta.get("track")]
+            and m.get("track") == lap_meta.get("track") and (lap_meta.get("id") is None or m.get("id") != lap_meta.get("id"))]
     return max(refs, key=lambda m: m.get("created", "")) if refs else None
 
 
@@ -186,6 +225,14 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
         car["steer"] = np.clip(np.arctan(vp.chassis.wheelbase_m * kappa) / np.radians(vp.steering.max_wheel_angle_deg), -1, 1)
     model = ghost_model_path(meta)
     label = f"{meta['driver']} | {meta['car']} @ {meta['track']} | {meta['lap_time']:.3f} s"
+    body = _stand_in_body(meta, vp)
+    if body is not None:
+        # The game shows another car's body (vehicles/ac_stand_ins.yaml, WP46): its own gearbox and
+        # engine run in the game, so choose gears for THAT gearbox, and push it with ITS mass.
+        car["gear"] = stand_in_gears(car["t"], car["speed"], body)
+        car["rpm"] = engine_rpm(car["speed"], car["gear"], body)
+        label += f" | shown with the {body.name} body"
+        vp = body
     if ghost:
         label += f" | ghost {ghost['meta']['lap_time']:.3f} s"
     return {"meta": meta, "label": label, "car": car, "model": model,
