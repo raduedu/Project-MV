@@ -57,6 +57,15 @@ tracks, evaluation, vehicle checks, reference laps, and charts of every run. It
 keeps running after the browser tab is closed; `mvctl ui-stop` stops it.
 Training never depends on it.
 
+**From your phone or another computer** — `mvctl remote` shows the same page on your
+[Tailscale](https://tailscale.com) network at `https://<this-pc>.<your-tailnet>.ts.net/`
+(HTTPS, reachable only by devices signed in to your Tailscale account; nothing is opened to
+the internet). It uses `tailscale serve`, which forwards to the local panel - the panel itself
+still listens on 127.0.0.1 only. The setting survives restarts; `mvctl remote-off` removes it.
+The panel must be running on the laptop (desktop shortcut or `mvctl ui`). Its buttons work
+remotely too, including Pause/Resume and "View in Assetto Corsa" (which starts the game on the
+laptop).
+
 **Terminal** — `mvctl status`, `mvctl watch` (live view with progress bars,
 Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 

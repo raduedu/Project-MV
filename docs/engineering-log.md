@@ -1409,3 +1409,21 @@ force is there; the driver has to learn to use it.
 **Queued.** `multi_v5_gearbox` (lane 1, after `multi_v4_big`): continues the big driver with
 `--downshift-frac 0.98`, 3 h. Judged by evaluating that driver with both gearboxes (the
 gearbox's own effect for a driver that knows it) and against `multi_v4_big`.
+
+## WP37 — Control panel reachable over Tailscale ✅
+
+**Objective (owner, 2026-11-24).** See the dashboard when away from the laptop.
+
+**Approach.** Not by making the panel listen on the network: it keeps listening on
+127.0.0.1 only. Tailscale's `serve` (already installed and signed in on the laptop)
+forwards `https://<pc>.<tailnet>.ts.net/` to it - HTTPS with a valid certificate, reachable
+only from devices in the owner's tailnet, not from the internet (that would be Funnel,
+deliberately not used). `mvctl remote` / `mvctl remote-off` switch it on/off; the setting
+survives restarts. The panel uses relative URLs only, so it works unchanged behind the proxy.
+
+**Verification.** Through the tailnet address: page HTTP 200 with certificate verification
+OK, `/api/state` returns live training progress (lanes, percentages) - identical to the local
+page.
+
+**Known limit.** After a reboot the panel itself is not running until it is started (desktop
+shortcut or `mvctl ui`); Tailscale then serves it again automatically.
