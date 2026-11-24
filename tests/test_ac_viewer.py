@@ -319,6 +319,7 @@ def test_fs_car_is_drawn_with_our_own_generic_model():
     assert "setVisible(visible)" in viewer and "ac.onRelease" in viewer        # never left invisible
     assert "fsState.broken" in viewer                                          # failure -> stand-in shown
     assert "mv:repaint:" in viewer and "setMaterialTexture('txDiffuse'" in viewer   # WP52 plain repaint
+    assert "sim.isInMainMenu" in viewer and "pendingStart" in viewer      # WP54: hands off in the game menu
     # nothing branded in the model: only generic names in the file
     for word in ("tatuus", "ferrari", "porsche", "dallara", "red bull"):
         assert word not in model.lower()

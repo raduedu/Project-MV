@@ -2047,3 +2047,23 @@ once with its type - the next run's log names the source. (2) The repaint runs f
 so nothing later can stop it. (3) Fully black: body (`RT_Skin`), headrest (`RT_COCKPIT_protezione`),
 details and mechanical parts (`RT_DETAILS`, `RT_MECH_PARTS`) near-black, decals hidden, tyre
 sidewalls black (payload 128 of 159 bytes).
+
+## WP54 — "ODE INTERNAL ERROR 1" again, with the car in the garage 🕓 (fixed offline; in-game check by the owner)
+
+**Owner (16:25, screenshot).** The repaint works ("seems good model wise" - the log confirms all six
+materials painted/hidden, and no more viewer errors after WP53), but the physics engine stopped again
+with *assertion "!row1_norm_fault" failed in odemath.cpp:296*.
+
+**Analysis.** This time the WP49/50 car upkeep cannot be the cause: it waits 10 s and needs 30 km/h,
+and the car never left the garage. Both crash screenshots (15:56 and 16:25) show the car still in its
+garage, i.e. the game's session menu was open (the owner had not pressed "Drive"). The viewer started
+the lap at once - placing the car on the start line and letting the 333 Hz force follower push it -
+while the game itself still held the car in the garage. Fighting the game's hold like that is the most
+likely way to produce a degenerate contact (a zero-length normal, which is exactly what the assertion
+checks). Earlier clean runs had "Drive" pressed quickly.
+
+**Fix.** While `sim.isInMainMenu` (or a replay) is active the viewer keeps its hands off the car: no
+placement, follower off, window says "press Drive (the steering wheel) in the game menu"; a Play /
+Restart requested meanwhile (also the launcher's automatic one) waits and starts when the menu closes.
+If the error still happens with the car on the track, the cause is elsewhere (next suspect: the
+follower's forces on the 552 kg Tatuus).

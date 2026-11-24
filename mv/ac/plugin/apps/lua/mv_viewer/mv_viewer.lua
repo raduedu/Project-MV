@@ -452,6 +452,13 @@ local function start(T)
   end
 end
 
+-- WP54: the game's own menu (before "Drive" is pressed) holds the car in its garage. Moving or pushing it
+-- then is what most likely broke the physics engine twice ("ODE INTERNAL ERROR 1", both times with the
+-- car still in the garage). So nothing is placed or pushed until the menu is closed; a start asked for
+-- meanwhile waits.
+local pendingStart = false
+local function onTrack() return not sim.isInMainMenu and not sim.isReplayActive end
+
 local function handleCommand()
   if data.magic ~= VIEWER_MAGIC then return end
   local s1 = data.seq
@@ -463,10 +470,11 @@ local function handleCommand()
   loop = lp == 1
   if not lap then return end
   if c == CMD.PLAY then
-    if active then playing = true else start(0) end
+    if active then playing = true elseif onTrack() then start(0) else pendingStart = true end
   elseif c == CMD.PAUSE then playing = false
   elseif c == CMD.STOP then active, playing, playT = false, false, 0; releaseCar()
-  elseif c == CMD.RESTART then start(0)
+  elseif c == CMD.RESTART then
+    if onTrack() then start(0) else pendingStart = true end
   elseif c == CMD.QUIT then                              -- the control panel restarts the game elsewhere
     active, playing = false, false; releaseCar()
     local ok, err = pcall(ac.shutdownAssettoCorsa)
@@ -614,13 +622,22 @@ local function tick(dt)
   local allowed = physics.allowed()
   if lap and allowed then startWorker() end
   handleCommand()
+  if not onTrack() then                                    -- game menu open: hands off the car
+    if followMode() then follow.active = 0 end
+    if lap then status = 'waiting: press Drive (the steering wheel) in the game menu' end
+  elseif pendingStart and lap then
+    pendingStart = false
+    start(0)
+  end
 
   if followMode() and follow.active == 1 then              -- worker alive? (heartbeat)
     if follow.steps ~= lastSteps then lastSteps, lastStepsChange = follow.steps, os.preciseClock()
     elseif os.preciseClock() - lastStepsChange > 2 then workerFailed = 'follower stopped responding' end
   end
 
-  if active and lap and not allowed then
+  if not onTrack() then
+    -- nothing: waiting for the menu to close (see above)
+  elseif active and lap and not allowed then
     status = 'no physics access in this session: use offline Practice (see docs chapter 07)'
   elseif active and lap and not sim.isPaused then
     if followMode() then
@@ -765,10 +782,10 @@ function script.windowMain(dt)
       ui.text(string.format('following: %.2f m, %.1f deg off the recorded lap', follow.posErr, follow.yawErrDeg))
     end
     if ui.button(active and playing and 'Pause' or 'Play') then
-      if active then playing = not playing else start(0) end
+      if active then playing = not playing elseif onTrack() then start(0) else pendingStart = true end
     end
     ui.sameLine()
-    if ui.button('Restart') then start(0) end
+    if ui.button('Restart') then if onTrack() then start(0) else pendingStart = true end end
     ui.sameLine()
     if ui.button('Stop') then active, playing, playT = false, false, 0; releaseCar() end
     local v, changed = ui.slider('##speed', speed, 0.1, 2.0, 'speed %.2fx')
