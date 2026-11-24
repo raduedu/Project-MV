@@ -1427,3 +1427,37 @@ page.
 
 **Known limit.** After a reboot the panel itself is not running until it is started (desktop
 shortcut or `mvctl ui`); Tailscale then serves it again automatically.
+
+## WP38 — Dashboard for phones ✅
+
+**Objective (owner, 2026-11-24).** A mobile-friendly dashboard (used over Tailscale, WP37).
+
+**Approach.** The same page and address, laid out for narrow screens by CSS rules that only
+apply below 640 px (the desktop layout is unchanged): compact header (title + status +
+Pause/Resume on one row, tabs in a sideways-swipeable row), training progress first on the
+Dashboard, wide content scrolls inside its own card instead of widening the page, less important
+table columns hidden (rule-based driver; average speed and date in the lap list), form fields
+stacked, finger-sized buttons on touch screens. For every screen size: each lane now shows
+running and waiting jobs first and folds finished ones into "Finished (N)" (newest first, stays
+open across the 5 s refresh) - the lists had grown to many finished jobs above the running one.
+
+**Verification** (browser at 375 x 812, the iPhone-class size): page width before/after -
+Dashboard 572 -> 375 px, Plan 717 -> 375, Runs 614 -> 375, Laps table cut off -> fits; header
+height ~220 -> 97 px; lane cards no longer scroll sideways (long car lists wrap); replay viewer
+(map, controls, chase camera) fits; desktop view checked unchanged.
+
+## WP30 — interim result: the bigger network trains worse (2026-11-24)
+
+At 70 % of its 8 h, `multi_v4_big` (1.7 M parameters, distilled) is clearly behind the same-size
+control `multi_v4_ctrl` on the same circuits and settings: crashes in training rose from 22 to
+~120 per 100 km (updates 80-400) and are only recovering (28), pace fell 157 -> 141 km/h, strict
+validation on its three training cars mostly 0-18 % of 11 tracks (control: 73-100 %;
+`multi_v5_zigzag`, continuing the control: 100 % at every check so far). Many of its updates
+change the driver 2.5-3x the KL target (0.03-0.04 vs 0.012) while staying under the 0.048 stop:
+the wide network takes too large steps and unlearns what it copied. Likely remedies to test
+later: a lower learning-rate ceiling for wide networks, a tighter KL stop (2x), or a smaller step
+in width (e.g. 768-512-256). Running to completion to see whether it recovers.
+
+**Consequence.** `multi_v5_gearbox` (WP36) was re-based before it started: it now continues the
+normal-size control driver (`multi_v4_ctrl/latest.pt`) instead of the big network's best
+checkpoint, so the gearbox test starts from a strong driver.

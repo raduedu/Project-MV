@@ -100,7 +100,40 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
 @media (prefers-color-scheme: dark) { .kind.learned { background: #401c1a; } .kind.reference { background: #1b2a45; } }
 tr.sel td { background: var(--bar); }
 a.b { color: var(--ink); display: inline-block; }
+.cars { overflow-wrap: anywhere; }
+details.donejobs { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
+details.donejobs summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+details.donejobs .job:first-of-type { border-top: 1px solid var(--line); }
 .speedkey { height: 8px; border-radius: 4px; background: linear-gradient(90deg, hsl(230,85%,55%), hsl(150,85%,45%), hsl(55,95%,50%), hsl(0,85%,55%)); }
+/* ---------- phones (engineering log WP38): same page, laid out for a narrow screen ---------- */
+@media (max-width: 640px) {
+  header { padding: 8px 12px 0; gap: 6px 10px; }
+  header h1 { font-size: 16px; }
+  nav { order: 10; flex: 0 0 calc(100% + 24px); margin: 0 -12px; padding: 0 12px 6px; flex-wrap: nowrap;
+        overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  nav::-webkit-scrollbar { display: none; }
+  nav button { flex: 0 0 auto; padding: 8px 12px; }
+  header .b { padding: 6px 10px; }
+  main { padding: 10px 10px 40px; }
+  .card { padding: 12px; margin-bottom: 10px; border-radius: 8px; overflow-x: auto; }
+  #tab-dash:not(.hidden) { display: flex; flex-direction: column; }
+  #tab-dash #lanes { order: -1; }                         /* training progress first */
+  .row { flex-direction: column; gap: 0; }
+  .metrics { gap: 4px 12px; }
+  table { font-size: 12.5px; } td, th { padding: 6px 5px; }
+  #fastest th:nth-child(4), #fastest td:nth-child(4) { display: none; }        /* rule-based driver */
+  #laplist th:nth-child(5), #laplist td:nth-child(5),
+  #laplist th:nth-child(6), #laplist td:nth-child(6) { display: none; }       /* average speed, date */
+  .chart { height: 180px; }
+  .controls input[type=range] { min-width: 0; flex-basis: 100%; }
+  .hud .big { font-size: 24px; }
+  pre { max-height: 220px; }
+  .toast { left: 10px; right: 10px; bottom: 10px; max-width: none; }
+}
+@media (pointer: coarse) {                                 /* finger-sized buttons on touch screens */
+  button.b, nav button { min-height: 38px; }
+  button.s { min-height: 32px; padding: 4px 10px; }
+}
 </style>
 </head>
 <body>
@@ -277,6 +310,7 @@ const act = async (path, body) => { try { const j = await api(path, body); toast
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const lap = t => t == null ? "—" : `${Math.floor(t / 60)}:${(t % 60).toFixed(3).padStart(6, "0")}`;
 let tab = "dash", options = null;
+const openDone = new Set();          // lanes whose "Finished" list the user opened
 
 // ---------------- tabs ----------------
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => show(b.dataset.tab));
@@ -300,9 +334,17 @@ async function refresh() {
   $("#btnPause").disabled = !(s.overall === "running" || s.overall === "idle");
   $("#btnResume").disabled = s.overall === "running" || s.overall === "pausing" || s.overall === "idle";
   $("#planlog").textContent = s.log.join("\n");
-  $("#lanes").innerHTML = s.lanes.map((jobs, k) => `<div class="card"><h2>Lane ${k + 1}</h2>${jobs.map(jobHTML).join("")}</div>`).join("")
+  // running and waiting jobs first; finished ones folded away (newest first) - the list grows with every run
+  $("#lanes").innerHTML = s.lanes.map((jobs, k) => {
+    const active = jobs.filter(j => j.state !== "done"), done = jobs.filter(j => j.state === "done").reverse();
+    return `<div class="card"><h2>Lane ${k + 1}</h2>${active.map(jobHTML).join("") || `<div class="muted">Nothing running or waiting.</div>`}`
+      + (done.length ? `<details class="donejobs" data-lane="${k}" ${openDone.has(k) ? "open" : ""}><summary>Finished (${done.length})</summary>`
+                       + done.map(jobHTML).join("") + `</details>` : "") + `</div>`;
+  }).join("")
     + (s.others.length ? `<div class="card">Other training processes (not in the plan): ${esc(s.others.join(", "))}</div>` : "")
     + (s.lanes.length ? "" : `<div class="card">No plan yet - add jobs under <b>Plan</b>.</div>`);
+  document.querySelectorAll("details.donejobs").forEach(d => d.ontoggle = () => {   // stays open across the 5 s refresh
+    const k = +d.dataset.lane; if (d.open) openDone.add(k); else openDone.delete(k); });
   document.querySelectorAll(".jobname").forEach(el => el.onclick = () => { show("runs"); setTimeout(() => { $("#runsel").value = el.dataset.n; loadRun(); }, 300); });
   if (tab === "plan") renderPlan(s);
   window._state = s;
@@ -322,7 +364,7 @@ function jobHTML(j) {
   const chips = v ? `<div class="chips"><span class="chip">last check ${v.tracks.filter(t => t.lap).length}/${v.tracks.length}</span>` +
     v.tracks.map(t => `<span class="chip ${t.lap ? "" : "off"}" title="${esc(t.note)}">${esc(t.track.replace("val_random_", "rnd"))} ${t.lap ? lap(t.lap) : "✗"}</span>`).join("") + "</div>" : "";
   return `<div class="job"><div class="jobhead"><span class="jobname" data-n="${esc(j.name)}">${esc(j.name)}</span>
-    <span class="state ${j.state.replace(" ", "")}">${esc(j.state)}</span><span class="muted">${esc(j.vehicle)}</span>
+    <span class="state ${j.state.replace(" ", "")}">${esc(j.state)}</span><span class="muted cars">${esc(j.vehicle.split(",").join(", "))}</span>
     <span class="spacer"></span><b>${pct}%</b></div>
     <div class="progress ${j.state === "done" ? "done" : ""}"><div style="width:${pct}%"></div></div>
     <div class="metrics">${m.join("")}</div>${chips}</div>`;
@@ -346,7 +388,7 @@ async function loadOptions() {
 }
 function renderPlan(s) {
   $("#planlist").innerHTML = s.lanes.map((jobs, k) => `<h3>Lane ${k + 1}</h3><table>` + jobs.map(j =>
-    `<tr><td><b>${esc(j.name)}</b><div class="hint">${esc(j.vehicle)} · ${j.hours_goal} h</div></td>
+    `<tr><td><b>${esc(j.name)}</b><div class="hint cars">${esc(j.vehicle.split(",").join(", "))} · ${j.hours_goal} h</div></td>
      <td><span class="state ${j.state.replace(" ", "")}">${esc(j.state)}</span></td>
      <td style="white-space:nowrap;text-align:right">
        <button class="b s" onclick="act('/api/plan/move',{name:'${j.name}',dir:-1}).then(refresh)">↑</button>
