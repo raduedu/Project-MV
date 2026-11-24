@@ -469,3 +469,15 @@ supersedes it — do not edit history.*
   observation contract (every trained model invalid) for a gain the force-optimal rule already
   captures; anticipation (e.g. holding a gear into a braking zone) is not needed - measured: no
   upshifts while lifting/braking.
+
+### D-037 — Keep the zig-zag penalty; retry a bigger network only with smaller steps
+
+* **Context.** WP40: the zig-zag penalty gave the fastest and most reliable driver so far
+  (15/15, steering reversals halved); the 1.7 M-parameter network ended 2-9 % slower than the
+  normal-size control.
+* **Decision.** `--steer-zigzag 5` in every following run. The bigger-network idea is not
+  dropped but retried at a medium size (768-512-256) with half the KL stop (`--kl-stop 2`),
+  distilled from the new best driver, against a same-settings normal-size run.
+* **Why.** The big network failed because its training steps were too large, not because of
+  its size as such (WP30 interim); a medium size with tighter steps tests that directly at a
+  third of the cost. Supersedes nothing; extends D-035 (zig-zag) and WP30.

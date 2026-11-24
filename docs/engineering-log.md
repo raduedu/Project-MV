@@ -1034,7 +1034,7 @@ complete **all 15 strict real-circuit laps** (table in WP27), at +4.4 / +7.3
 1-2 crashes per 100 km in training. Car variation works; its price is
 about 1 % of pace on the 918, which the next work package attacks.
 
-## WP30 — A bigger driver, distilled from the current one 🕓 (built and smoke-tested; run queued)
+## WP30 — A bigger driver, distilled from the current one ❌ (1.7 M network trained worse; result and retry in WP40)
 
 **Objective (owner, 2026-11-23).** "Train it as good and hard as you think it
 would be beneficial - a larger model is fine as long as it runs on this
@@ -1330,7 +1330,7 @@ is pessimistic (real tyres steer with the car instead of fighting every slide).
 **Next steps.** Owner: reinstall the apps, try Spa again; the window shows "following: x m, y
 deg" and a stiffness slider (0.3-3). If the worker does not start, the window says "fallback".
 
-## WP35 — Owner's in-game test: gearbox damage, ghost fixes, steering zig-zag, shift points 🕓 (viewer fixed offline; zig-zag run queued)
+## WP35 — Owner's in-game test: gearbox damage, ghost fixes, steering zig-zag, shift points ✅ (zig-zag result in WP40)
 
 **Owner's report (2026-11-23).** "It works well" (WP34 follower: smooth, dashboard and gears
 show), but: the ghost is not see-through and floats; a pulsing red "driveshaft" indicator;
@@ -1488,3 +1488,54 @@ catch). The shader therefore uses only inputs CSP's own shipped script uses on t
 
 **Verification (offline).** Lua parses; no unknown names; viewer tests updated (9 pass, 140 in
 total). Not seen in the game yet.
+
+## WP40 — Results: zig-zag penalty wins, the big network loses; next 14 h queued (2026-11-24)
+
+**Objective.** Judge the finished runs strictly and fill the GPU for the next ~14 h (owner: the
+laptop stays on).
+
+**Method.** Strict evaluation (no rejoining after going off), 5 real circuits (Imola, Red Bull
+Ring, Monza, Mugello, Spa) x the 3 training cars, laps timed per car separately on the CPU,
+original 0.93 gearbox for all. Gap = mean over completed circuits against the physics reference
+lap; reversals = steering direction changes per second (reference lap ~0.5); paired change =
+mean lap-time difference against `multi_v4_ctrl/best` on circuits both completed.
+
+| Driver | Completed | 911 gap | 918 gap | Taycan gap | Reversals /s | vs control |
+|---|---|---|---|---|---|---|
+| `multi_v3_cars/best` (previous best) | 15/15 | +4.37 % | +7.26 % | +5.83 % | 15-20 | +0.38 s |
+| `multi_v4_ctrl/best` (control, 4 h on `complex` circuits) | 15/15 | +4.37 % | +7.06 % | +4.94 % | 9-13 | - |
+| `multi_v4_ctrl/latest` | 13/15 | +4.13 % | +7.15 % | +5.01 % | 9-13 | -0.04 s |
+| **`multi_v5_zigzag/best`** (control + zig-zag penalty 5, 3 h) | **15/15** | **+4.00 %** | **+6.97 %** | **+4.92 %** | **6-7** | **-0.16 s (faster on 10/15)** |
+| `multi_v5_zigzag/latest` | 14/15 | +4.23 % | +7.06 % | +4.99 % | 6-7 | -0.07 s |
+| `multi_v4_big/best` (1.7 M parameters, 8 h) | 13/15 | +9.77 % | +16.32 % | +13.85 % | 7-12 | +8.8 s |
+| `multi_v4_big/latest` | 13/15 | +8.68 % | +12.00 % | +11.13 % | 7-11 | +5.9 s |
+
+Best laps of the new best driver: 911 Imola 1:57.26 (previous best 1:57.4), RBR 1:41.18, Monza
+2:01.74, Mugello 2:08.19, Spa 2:43.26; 918 RBR 1:33.08, Monza 1:54.60; Taycan RBR 1:38.00.
+In training: crashes 15 -> 6 per 100 km.
+
+**Findings.**
+1. *Zig-zag penalty (D-035) works and costs nothing:* steering reversals almost halved
+   (12.8 -> 6.9 /s for the 911; still far from the reference's 0.5), all 15 laps completed and
+   slightly faster - the sawing was wasted motion, not speed. Kept on for all following runs.
+2. *The 1.7 M-parameter network (WP30) failed:* 2-9 % slower than the same-size control after
+   twice the training time, two circuits not completed. Root cause (WP30 interim): updates 2.5-3x
+   larger than the KL target - the wide network unlearned what it had copied and never recovered.
+   Bigger is not automatically better here; the limit is how carefully it can be trained.
+3. `best.pt` (chosen on generated validation circuits) beats `latest.pt` on real circuits for
+   both normal-size runs - keep using `best` as the starting point.
+
+**Queued (plan, 2026-11-24 12:45).**
+* Lane 1, after `multi_v5_gearbox` (~2.8 h left): `multi_v6_long` - continues
+  `multi_v5_zigzag/best` with zig-zag 5 and the stronger-gear gearbox (`--downshift-frac 0.98`,
+  WP36), 10 h. The main line: is more training of the winner still paying off?
+* Lane 2 now: `multi_v6_mid` - a medium network (768-512-256, ~0.75 M parameters, ~3.5x the
+  usual) distilled from `multi_v5_zigzag/best`, with **half the KL stop** (`--kl-stop 2`, update
+  ends once it changes the driver by > 0.024) to prevent the big network's failure; same settings
+  as `multi_v6_long`, 7 h. Compared with `multi_v6_long` at equal hours (checkpoints).
+* Lane 2 then: `fs_v3_zigzag` - the Formula Student car (`fs_v2_vary/best`) with the zig-zag
+  penalty and light smoothing (filter 0.03 s, penalty 0.2), 3 h.
+
+**Next steps.** Evaluate `multi_v5_gearbox` with both gearboxes (WP36); if 0.98 turns out worse,
+switch `multi_v6_long` back to 0.93 before it starts. Then evaluate the three runs above the
+same way.
