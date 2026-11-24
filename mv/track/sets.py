@@ -29,7 +29,7 @@ SETS_FILE = ROOT / "tracks" / "sets.yaml"
 __all__ = ["load_sets", "imported_tracks", "validation_names", "trainable_names", "narrowed"]
 
 
-def narrowed(track, margin_m: float, min_half_width_m: float = 2.0):
+def narrowed(track, margin_m, min_half_width_m: float = 2.0):
     """The same circuit with both edges moved ``margin_m`` metres inwards (WP48).
 
     Why: an imported circuit's edges sit about at the white lines; just beyond them the
@@ -37,14 +37,16 @@ def narrowed(track, margin_m: float, min_half_width_m: float = 2.0):
     flat road and no kerbs, so a driver trained to use every centimetre rides those
     bumps when its lap is played in the game, and the car is thrown in the air. A margin
     keeps the wheels off them. Each half-width stays at least ``min_half_width_m``.
+    ``margin_m`` may also be one value per track point (more room where it is needed, WP57).
     """
-    if margin_m <= 0:
+    m = np.broadcast_to(np.asarray(margin_m, float), (track.n,))
+    if np.all(m <= 0):
         return track
     from mv.track.track import Track
-    wl = np.maximum(np.asarray(track.w_left, float) - margin_m, min_half_width_m)
-    wr = np.maximum(np.asarray(track.w_right, float) - margin_m, min_half_width_m)
+    wl = np.maximum(np.asarray(track.w_left, float) - m, min_half_width_m)
+    wr = np.maximum(np.asarray(track.w_right, float) - m, min_half_width_m)
     meta = dict(track.meta or {})
-    meta["edge_margin_m"] = float(margin_m)
+    meta["edge_margin_m"] = float(m.max()) if np.ptp(m) > 0 else float(m[0])
     return Track.from_centerline(track.xy, wl, wr, ds=track.ds, name=track.name, meta=meta)
 
 

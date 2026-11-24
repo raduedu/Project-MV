@@ -2108,3 +2108,21 @@ through corners at the recorded car's speeds). The one or two spots off the trac
 they are (follower lag at FS-car speeds; not worth a wider margin for the whole lap). 179 tests pass.
 
 **Addendum (owner, 16:50): Spa closer to the edge.** "Make it a little closer to the curb/edge, but not go over it: 0.1 or 0.2 m instead of 0.6." Spa FS lap recomputed with the stand-in kept **0.2 m** from the edges (line 1.06 m from the edge): **3:03.992** (0.6 m: 3:04.287). `personal/demos/view_fs_spa.cmd` plays it; Monza stays at 0.6 m.
+
+## WP57 — Demo line with more room where the stand-in needs it 🕓 (in-game check by the owner)
+
+**Owner (17:04, screenshot at Spa, 138 km/h, 2.3 g).** Spa is "perfect" except that it goes off the
+track just before a fast corner ("a bit too strict"); Monza: suspension still bad, "especially on the
+right side". The game's assists were checked afterwards: the owner's own file was correctly restored
+and no backup left, i.e. the Monza demo ran with damage off - so this is not damage.
+
+**Cause.** The car the game moves is the heavier Tatuus following the FS car's line: in fast high-g
+corners it follows a little late and drifts wide; in tight chicanes (Monza's Rettifilo and Roggia,
+right-hand apex first) the line rides the inside kerbs and raised bumps.
+
+**Fix.** `narrowed()` accepts one margin per track point. Demo laps: base margin (Spa 0.2 m as the
+owner asked, Monza 0.6 m as before), plus up to 0.5 m in corners above 1.5 g (0 at 15 m/s^2, full at
+23 m/s^2) and 0.6 m where the corner radius is under 60 m, widened 40 m before and after. Spa:
+**3:04.769** (extra room on 29 % of the lap; uniform 0.2 m was 3:03.992); Monza: **2:32.330** (19 %;
+uniform 0.6 m 2:31.787). Script `personal/tools/fs_demo_lap.py <track> [base]` (owner's folder);
+launchers updated.
