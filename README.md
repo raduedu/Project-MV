@@ -90,9 +90,9 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 | Tune a car to match the game (system identification) | record with `scripts\ac_drive.py ... --record x.npz`, then `scripts\sysid_fit.py --vehicle <car> x.npz` |
 | Drive in the game | `scripts\ac_drive.py --vehicle ks_porsche_911_gt3_rs --track imola --scripted --dry-run` (then see its `--help`) |
 | Show a lap in the game, with the ghost | control panel -> Laps -> Watch -> **View in Assetto Corsa**, or `scripts\ac_view.py --best ks_porsche_911_gt3_rs imola` (the button starts the game on the right circuit and car; setup: docs/07, "Viewing laps in the game") |
-| Train on real circuits too (some always held out) | add `--real-tracks all` to `scripts	rain.py` (which circuits: `tracks/sets.yaml`) |
-| Train on many cars at once | `scripts	rain.py --vehicle @favourites,@racing,-fs_generic_ev ...` (catalogue groups, see below) |
-| Race a real F1 lap in equal machinery | `scripts1_benchmark.py` (fetch, align, fit the car), then `scripts1_benchmark.py --race runs\<run>est.pt` - private data, never committed (D-038, log WP43) |
+| Train on real circuits too (some always held out) | add `--real-tracks all` to `scripts\train.py` (which circuits: `tracks/sets.yaml`) |
+| Train on many cars at once | `scripts\train.py --vehicle @favourites,@racing,-fs_generic_ev ...` (catalogue groups, see below) |
+| Race a real F1 lap in equal machinery | `scripts\f1_benchmark.py` (fetch, align, fit the car), then `scripts\f1_benchmark.py --race runs\<run>\best.pt` - private data, never committed (D-038, log WP43) |
 | Run the tests | `-m pytest tests -q` |
 | Publish / update the private GitHub repo | `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` |
 
