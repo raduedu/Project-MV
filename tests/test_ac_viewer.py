@@ -222,6 +222,10 @@ def test_open_lap_in_game_starts_restarts_or_plays(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "steam_running", lambda: True)
     monkeypatch.setattr(L, "running_session", lambda: session[0])
     monkeypatch.setattr(L, "start_game", lambda root: started.append(root))
+    assists = tmp_path / "assists.ini"                 # never the owner's real file
+    assists.write_text("[ASSISTS]\nABS=1\nDAMAGE=100\n")
+    monkeypatch.setattr(L, "assists_ini_path", lambda: assists)
+    monkeypatch.setattr(L, "ASSISTS_BACKUP", tmp_path / "backups" / "assists_owner.ini")
 
     class Link:
         def __init__(self):
@@ -239,6 +243,7 @@ def test_open_lap_in_game_starts_restarts_or_plays(tmp_path, monkeypatch):
     assert r["started"] and started == [ac_root] and link.loaded == 1
     assert _ini(ini.read_text())["RACE"]["TRACK"] == "imola"
     assert len(list((tmp_path / "backups").glob("race_*.ini"))) == 1       # the owner's file was kept
+    assert _ini(assists.read_text())["ASSISTS"]["DAMAGE"] == "0"            # demo assists (WP55)
 
     running[0], session[0] = True, {"car": "ks_porsche_911_gt3_rs", "track": "imola", "layout": ""}
     r = L.open_lap_in_game(payload, link, ac_root=ac_root)
@@ -264,10 +269,10 @@ def test_exit_watchdog_ends_only_a_game_that_hangs_after_a_clean_exit(tmp_path):
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
         # no "CLEAN EXIT" in the log: the watchdog must leave it alone
-        assert watch_game(proc.pid, since, log, grace_s=0.3, poll_s=0.1, max_hours=1.5 / 3600) == "gave up"
+        assert watch_game(proc.pid, since, log, grace_s=0.3, poll_s=0.1, max_hours=1.5 / 3600, restore=False) == "gave up"
         assert proc.poll() is None
         threading.Timer(0.5, lambda: log.write_text("...\nCLEAN EXIT\n")).start()
-        assert watch_game(proc.pid, since, log, grace_s=0.5, poll_s=0.1, max_hours=0.01) == "ended after clean exit"
+        assert watch_game(proc.pid, since, log, grace_s=0.5, poll_s=0.1, max_hours=0.01, restore=False) == "ended after clean exit"
         proc.wait(timeout=10)
     finally:
         if proc.poll() is None:
@@ -336,3 +341,21 @@ def test_lua_never_overwrites_vectors_by_accident():
         for m in re.finditer(r":cross\(([^()]*)\)", src):
             assert "," in m.group(1), f"{f}: {m.group(0)} overwrites its own vector"
         assert not re.search(r"car\.\w+:(normalize|cross|scale|add|sub)\(", src), f"{f}: writes into a game vector"
+
+
+
+def test_demo_assists_are_applied_and_the_owners_come_back(tmp_path):
+    """WP55: a demo gets no damage, forced ABS/TC, no wear; the owner's assists.ini is restored after,
+    and a backup left by a crashed demo is never overwritten with demo values."""
+    import mv.ac.launch as L
+    path, backup = tmp_path / "assists.ini", tmp_path / "b" / "assists_owner.ini"
+    owner = "[ASSISTS]\nIDEAL_LINE=0\nABS=1\nTRACTION_CONTROL=1\nDAMAGE=100\nTYRE_WEAR=1\nFUEL_RATE=1\n"
+    path.write_text(owner)
+    L.apply_demo_assists(path, backup)
+    a = _ini(path.read_text())["ASSISTS"]
+    assert (a["DAMAGE"], a["ABS"], a["TRACTION_CONTROL"], a["TYRE_WEAR"], a["FUEL_RATE"]) == ("0", "2", "2", "0", "0")
+    assert a["IDEAL_LINE"] == "0"                                   # the owner's other settings stay
+    L.apply_demo_assists(path, backup)                              # a second demo (first never restored)
+    assert backup.read_text() == owner                              # still the owner's, not demo values
+    assert L.restore_owner_assists(path, backup) and path.read_text() == owner and not backup.exists()
+    assert not L.restore_owner_assists(path, backup)                # nothing left to restore

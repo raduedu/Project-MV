@@ -221,6 +221,54 @@ def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
     return _dump_ini([(n, list(d[n].items())) for n in order])
 
 
+# ---------------------------------------------------------------------- demo assists (WP55)
+#: Assists for a demo lap shown in the game. Owner (2026-11-24): "it already lost its wheels, it might also
+#: lock up heavily in braking zones - put an ABS on it, it's just for show". Damage off (wheels cannot come
+#: off), ABS and traction control forced on for any car (2 = "on"; 1 = only if the car has its own),
+#: auto-clutch and auto-blip on (smoother gear changes), no fuel use, no tyre wear, tyre blankets.
+DEMO_ASSISTS = {"DAMAGE": "0", "VISUALDAMAGE": "0", "ABS": "2", "TRACTION_CONTROL": "2", "AUTO_CLUTCH": "1",
+                "AUTO_BLIP": "1", "FUEL_RATE": "0", "TYRE_WEAR": "0", "TYRE_BLANKETS": "1"}
+ASSISTS_BACKUP = BACKUP_DIR / "assists_owner.ini"
+
+
+def assists_ini_path() -> Path:
+    return documents_dir() / "cfg" / "assists.ini"
+
+
+def restore_owner_assists(path: Path | None = None, backup: Path | None = None) -> bool:
+    """Put the owner's own assists.ini back (after a demo); True if there was one to restore."""
+    path, backup = path or assists_ini_path(), backup or ASSISTS_BACKUP
+    if not backup.is_file():
+        return False
+    shutil.copy2(backup, path)
+    backup.unlink()
+    return True
+
+
+def apply_demo_assists(path: Path | None = None, backup: Path | None = None) -> None:
+    """Back up the owner's assists.ini and write the demo assists into it.
+
+    The owner's file is the one for his own driving (damage 100 %, wear on ...). It is copied to
+    ``runs/ac_launch/assists_owner.ini`` first - unless such a copy already exists, which means a
+    previous demo never restored it (game crashed): then that copy is put back first, so a demo's
+    values are never saved as the owner's. The exit watchdog restores it when the game closes.
+    """
+    path, backup = path or assists_ini_path(), backup or ASSISTS_BACKUP
+    restore_owner_assists(path, backup)
+    old = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else "[ASSISTS]\n"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        shutil.copy2(path, backup)
+    secs = _parse_ini(old)
+    d = {n: dict(k) for n, k in secs}
+    order = [n for n, _ in secs] or ["ASSISTS"]
+    d.setdefault("ASSISTS", {}).update(DEMO_ASSISTS)
+    if "ASSISTS" not in order:
+        order.append("ASSISTS")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_dump_ini([(n, list(d[n].items())) for n in order]), encoding="utf-8")
+
+
 def write_race_ini(text: str, path: Path | None = None) -> Path | None:
     """Back up the current race.ini (runs/ac_launch, last 10) and write the new one. Returns the backup."""
     path = path or race_ini_path()
@@ -320,6 +368,7 @@ def open_lap_in_game(payload: dict, link, ghost_car: bool = False, restart: bool
     skin = prev.get("SKIN") if prev.get("MODEL") == car and prev.get("SKIN") in skins else (skins[0] if skins else "")
     ghost_skin = next((s for s in skins if s != skin), skin)
     write_race_ini(build_race_ini(old, car, skin, track, layout, ghost_car=ghost_car, ghost_skin=ghost_skin), path)
+    apply_demo_assists()                                 # restored by the exit watchdog (watch_game)
     start_game(root)
     link.load(payload, speed=speed, loop=True)
     warn = "" if steam_running() else " Steam does not seem to be running - the game needs it."
@@ -352,7 +401,7 @@ def _clean_exit_logged(log: Path, since: float) -> bool:
 
 
 def watch_game(pid: int, since: float, log: Path | None = None, grace_s: float = 8.0, poll_s: float = 1.0,
-               max_hours: float = 24.0, kill=None) -> str:
+               max_hours: float = 24.0, kill=None, restore: bool = True) -> str:
     """End a game process that hangs after a clean exit (owner's report, 2026-11-23; log WP33).
 
     Assetto Corsa writes "CLEAN EXIT" to its log when the player quits. Started
@@ -361,22 +410,30 @@ def watch_game(pid: int, since: float, log: Path | None = None, grace_s: float =
     forever. Content Manager handles this the same way: if the process is still
     there ``grace_s`` seconds after a clean exit was logged, it is terminated.
     A game that has not logged its exit is never touched. Returns what happened.
+    When the game is gone, the owner's own assists.ini is put back (demo assists, WP55).
     """
     log = log or game_log_path()
     kill = kill or (lambda p: subprocess.run(["taskkill", "/PID", str(p), "/F"], capture_output=True,
                                              creationflags=0x08000000))
-    t_end = time.time() + max_hours * 3600
-    exit_seen = None
-    while time.time() < t_end:
-        if not _alive(pid):
-            return "exited"
-        if exit_seen is None and _clean_exit_logged(log, since):
-            exit_seen = time.time()
-        if exit_seen is not None and time.time() - exit_seen > grace_s:
-            kill(pid)
-            return "ended after clean exit"
-        time.sleep(poll_s)
-    return "gave up"
+    try:
+        t_end = time.time() + max_hours * 3600
+        exit_seen = None
+        while time.time() < t_end:
+            if not _alive(pid):
+                return "exited"
+            if exit_seen is None and _clean_exit_logged(log, since):
+                exit_seen = time.time()
+            if exit_seen is not None and time.time() - exit_seen > grace_s:
+                kill(pid)
+                return "ended after clean exit"
+            time.sleep(poll_s)
+        return "gave up"
+    finally:
+        if restore:
+            try:
+                restore_owner_assists()                  # the owner's own assists back (WP55)
+            except Exception:
+                pass
 
 
 def _start_watchdog(pid: int, since: float) -> None:

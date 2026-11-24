@@ -2067,3 +2067,22 @@ placement, follower off, window says "press Drive (the steering wheel) in the ga
 Restart requested meanwhile (also the launcher's automatic one) waits and starts when the menu closes.
 If the error still happens with the car on the track, the cause is elsewhere (next suspect: the
 follower's forces on the 552 kg Tatuus).
+
+## WP55 — Demo assists: no damage, ABS and traction control on 🕓 (offline tests; in-game check by the owner)
+
+**Owner (2026-11-24).** "It already lost its wheels; it might also lock up heavily in braking zones. Put
+an ABS on it, it's just for show."
+
+**Cause.** The owner's own assists (`Documents/Assetto Corsa/cfg/assists.ini`, used by every session):
+damage 100 % (wheels come off after hard contacts - here the bumps and the Tatuus' different track and
+mass), ABS 1 = only if the car has one (the Tatuus has none), traction control 1, wear and fuel on.
+
+**Fix.** `launch.apply_demo_assists()` before a demo start: damage 0 (and visual damage 0), ABS 2 and
+traction control 2 (forced on for any car), auto-clutch and auto-blip on, no fuel use, no tyre wear,
+tyre blankets - the owner's other settings unchanged. His file is copied to
+`runs/ac_launch/assists_owner.ini` first and put back by the exit watchdog when the game closes
+(`watch_game(..., restore=True)`, also after a crash: the process ends, the watchdog restores). If a
+copy is still there from a crashed demo, it is restored before a new demo, so demo values are never
+saved as the owner's. Tests: `test_demo_assists_are_applied_and_the_owners_come_back`, and the
+launcher test now uses a temporary assists file (checked: the owner's real file is untouched -
+still ABS 1, damage 100).
