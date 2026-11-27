@@ -41,6 +41,8 @@ def main() -> int:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--speed", type=float, default=1.0, help="playback speed (1 = real time)")
     ap.add_argument("--no-ghost", action="store_true")
+    ap.add_argument("--keep-off-kerbs", action="store_true",
+                    help="demos: where the car's centre ran past the track edge, show it at the edge (WP59)")
     ap.add_argument("--no-loop", action="store_true")
     ap.add_argument("--wait", type=float, default=600.0, help="seconds to wait for the game (default 600)")
     ap.add_argument("--restart-game", action="store_true",
@@ -71,7 +73,7 @@ def main() -> int:
         key = min(cands, key=lambda m: m["lap_time"])["key"]
     if not key:
         ap.error("give a lap key, --best CAR TRACK, --list or a playback command")
-    payload = viewer_payload(key, None if a.no_ghost else "auto")
+    payload = viewer_payload(key, None if a.no_ghost else "auto", keep_off_kerbs=a.keep_off_kerbs)
     if a.no_launch:
         lap_id = link.load(payload, speed=a.speed, loop=not a.no_loop)
     else:

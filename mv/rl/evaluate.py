@@ -63,10 +63,14 @@ def evaluate(net, vp: VehicleParams, tracks: list[Track], device, laps: int = 2,
     ``min_avg_speed`` (m/s) after the first 20 s; an untrained driver would
     otherwise crawl around for the full time limit.
 
-    ``blind=True`` shortens the track preview to 40 m to mimic a first lap on an
+    ``blind`` = a number: the car sees the track (preview and lidar) only that many metres ahead,
+    like a real car's sensors with no map (race bot, WP60). ``blind=True`` shortens the track preview to 40 m to mimic a first lap on an
     unknown track.  ``grip`` scales tyre grip (e.g. 0.9 for a dusty track).
     """
-    cfg = eval_config(cfg)
+    # enough time for every lap at a crawl of 15 m/s (54 km/h): 900 s was too short for 2 laps of the
+    # 20.8 km Nordschleife - a clean driver was stopped by "timeout" in lap 2 (WP60)
+    longest = max(t.length for t in tracks)
+    cfg = eval_config(cfg, max_time_s=max(900.0, laps * longest / 15.0))
     # A handful of cars is much faster on the CPU than on the GPU (the GPU has a
     # fixed cost per operation that only pays off with thousands of cars).
     device = torch.device(device)
@@ -87,8 +91,9 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
     env.fixed_start = (0, 0.0)
     env.reset(torch.arange(env.n, device=env.device))
     env.sim.grip[:] = grip
-    if blind:
-        env.set_view(40.0)
+    view = (40.0 if blind is True else float(blind)) if blind else None
+    if view:
+        env.set_view(view)
     n = env.n
     active = torch.ones(n, dtype=torch.bool, device=env.device)
     lap_times: list[list[float]] = [[] for _ in range(n)]
@@ -134,8 +139,8 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
         for i in slow.nonzero().flatten().tolist():
             active[i] = False
             reason[i] = "slow"
-        if blind:
-            env.set_view(40.0)
+        if view:
+            env.set_view(view)
         env.sim.grip[:] = grip
         if not active.any():
             break

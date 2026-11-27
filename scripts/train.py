@@ -203,6 +203,11 @@ def main() -> None:
     ap.add_argument("--real-tracks", default="",
                     help="also train on imported real circuits: 'all' or comma-separated names; circuits held out in "
                          "tracks/sets.yaml (never_train) are always excluded (engineering log WP42)")
+    ap.add_argument("--sensor-range", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
+                    help="metres: in EVERY episode the driver sees the track (preview and lidar) only this far "
+                         "ahead, drawn per episode from LOW-HIGH - like a real car's sensors, no map. "
+                         "Automotive lidars: ~200-265 m on paper for dark targets, 25-120 m measured "
+                         "independently (log WP60)")
     ap.add_argument("--track-margin", type=float, default=0.0,
                     help="metres: move the edges of imported real circuits inwards (training and validation), "
                          "so laps stay off the game's kerbs and bumps when played in Assetto Corsa (log WP48)")
@@ -277,6 +282,12 @@ def main() -> None:
         env_cfg.steer_zigzag_penalty = args.steer_zigzag
     if args.downshift_frac is not None:
         env_cfg.downshift_frac = args.downshift_frac
+    # validation sees as far as the sensors do (the middle of the range), so it measures the real task
+    val_view = 0.5 * (args.sensor_range[0] + args.sensor_range[1]) if args.sensor_range else False
+    if args.sensor_range:
+        env_cfg.blind_prob = 1.0
+        env_cfg.blind_horizon_m = (float(args.sensor_range[0]), float(args.sensor_range[1]))
+        env_cfg.blind_lidar = True
     if args.limit_seeking:
         env_cfg.recover_on_crash = True
         env_cfg.lap_memory = True
@@ -415,7 +426,7 @@ def main() -> None:
                 n_evals += 1
                 if len(vps) > 1:
                     print(f"  validating with {val_vp.name}", flush=True)
-                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg, record=True)
+                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg, record=True, blind=val_view)
                 save_record_laps(res, val, val_vp, name, it, record_laps)
                 val_finished = sum(r.finished for r in res) / len(res)
                 # score: average speed over the distance covered, zero credit beyond 2 laps
@@ -434,7 +445,7 @@ def main() -> None:
                 ppo.save(run / f"eval_{it:05d}.pt", {"iteration": it, "score": score, "vehicle": args.vehicle})
                 if holdout_vps:                  # a car file the driver never trained on
                     hv = holdout_vps[(n_evals - 1) % len(holdout_vps)]
-                    hres = evaluate(ppo.net, hv, val, "cpu", laps=2, cfg=env_cfg)
+                    hres = evaluate(ppo.net, hv, val, "cpu", laps=2, cfg=env_cfg, blind=val_view)
                     hdone = sum(r.finished for r in hres)
                     print(f"  held-out car {hv.name}: {hdone}/{len(hres)} completed  " +
                           " ".join(f"{r.track}:{r.flying_lap:.2f}" for r in hres if r.finished and not r.track.startswith("val_")),

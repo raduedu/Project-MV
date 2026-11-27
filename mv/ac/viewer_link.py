@@ -241,8 +241,12 @@ def find_ghost(lap_meta: dict, laps: list[dict]) -> dict | None:
     return max(refs, key=lambda m: m.get("created", "")) if refs else None
 
 
-def viewer_payload(key: str, ghost_key: str | None = "auto", keep_off_kerbs: bool = True) -> dict:
+def viewer_payload(key: str, ghost_key: str | None = "auto", keep_off_kerbs: bool = False) -> dict:
     """Everything the viewer needs for one lap: car arrays, ghost arrays, label.
+
+    The lap is shown exactly as recorded (owner, 2026-11-27: "the AC viewer as accurate as possible").
+    ``keep_off_kerbs=True`` (demos only) moves stretches where the car's centre ran past the track edge
+    back to the edge (WP59).
 
     ``ghost_key``: "auto" = reference lap of the same car and circuit, None = no ghost.
     Raises ValueError for laps on circuits that do not exist in Assetto Corsa.

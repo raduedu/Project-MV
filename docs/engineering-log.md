@@ -2216,3 +2216,33 @@ inside untouched) and the stand-in steering (identity for the same car; longer w
 double lock = half the fraction). Both Lua files parse; 181 tests pass. **Not seen in the game yet.**
 Where a learned driver itself slides or crashes, the game shows that too - that is the driver, not the
 viewer.
+
+## WP60 — The race bot, stage 1: sensor range only, learning a track from nothing 🕓 (training)
+
+**Owner (2026-11-27).** A driver to race against in the game, in the same car, on any track; corrects
+itself instead of being restarted; learns to overtake; able to learn a track from nothing - the
+Nordschleife at realistic lidar range, against the owner. Also: "the AC viewer as accurate as possible
+(the 0.2 m / kerb changes were for the demos)". Plan with stages: `docs/09-race-bot.md`.
+
+**Done now.**
+* Viewer: laps play exactly as recorded again (`viewer_payload(keep_off_kerbs=False)` default;
+  `ac_view.py --keep-off-kerbs` for demos).
+* Lidar range researched: ~200-265 m specified for 10 %-reflective targets (Velodyne Alpha Prime 265 m,
+  Luminar Iris 250 m, Hesai Pandar128 200 m), 25-120 m (50 m average) measured independently on eight
+  automotive lidars. Training: 50-200 m; test: 120 m.
+* Nordschleife (both layouts) in `never_train`. `multi_v7_racing` had already trained on them (started
+  before), so the race bot descends from `multi_v5_zigzag`.
+* `train.py --sensor-range LOW HIGH`: every episode sees only that far (preview + lidar); validation
+  at the middle of the range. `evaluate(blind=<metres>)`. Evaluation time limit now scales with track
+  length (900 s stopped clean drivers in lap 2 of the 20.8 km Nordschleife).
+
+**Baseline (data).** `multi_v5_zigzag/best`, 911 GT3 RS, Nordschleife never seen, first lap from a
+standing start: full preview 7:58.4, 120 m 8:35.3, 60 m 9:19.7 (top speed 298 / 225 / 175 km/h - it
+brakes for what it cannot see). Validation circuits at 125 m view, before training: 55 % completed.
+
+**Queued.** `race_v1_sensor` (lane 2, 8 h): from `multi_v5_zigzag/best`, 911 + 918 + Taycan with car
+variation, memory (8 samples) + lap memory (limit-seeking, 240 s episodes = several laps), sensors
+50-200 m, real circuits (26, held-out ones excluded) 30 % of the pool.
+
+**Next.** Stage 2 self-recovery (no teleport), stage 3 own map, stage 4 racing others, stage 5 live in
+the game (bot = car 1 via `ac.overrideCarControls(1)`).

@@ -25,6 +25,10 @@ never_train:
   - mugello
   - ks_laguna_seca
   - ks_brands_hatch__gp
+  # the owner's test of the race bot (2026-11-27): the Nordschleife "from nothing" - never seen in training
+  # (WP60; note: multi_v7_racing, started before this, did train on both layouts)
+  - ks_nordschleife__nordschleife
+  - ks_nordschleife__endurance
 
 skip:
   - ks_monza66__full              # oval + road course: the lap crosses itself (bridge) - our tracks cannot

@@ -535,3 +535,15 @@ supersedes it — do not edit history.*
   set that cannot be tested here, and a bad file can crash the game. (c) uses only drawing calls of
   the owner's CSP, is unbranded by construction, and falls back to the visible stand-in on failure.
   Supersedes D-041 for the FS car only.
+
+### D-044 — The race bot learns with sensor range only, and races live as an AI car of the game
+
+* **Context.** Owner: a bot to race against in the game, same car, any track, learns from nothing
+  (Nordschleife, realistic lidar), recovers by itself, overtakes.
+* **Decision.** (1) The bot sees only a sensor range (50-200 m in training, 120 m for the test) and
+  never trains on the test circuit; it learns a circuit lap by lap through its lap memory (later: its
+  own map of track already driven). (2) It races live as the second car of an offline session,
+  controlled by our app through CSP's control override for AI cars; the owner drives car 0 in the
+  same car model. (3) Recovery is learned (no teleports), overtaking by self-play in our simulator.
+* **Why.** A preview of the whole track is a map; a real car racing an unknown circuit has sensors.
+  Driving an AI slot keeps the game's own physics for both cars - equal machinery by construction.
