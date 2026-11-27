@@ -33,6 +33,7 @@ class LapResult:
     max_speed: float
     off_track_steps: int              # decisions with any part of the car over the edge
     recoveries: int = 0               # limit-seeking mode: times the car went off and was put back on
+    excursions: int = 0               # self-recovery (strict=False): times it left the road (3+ wheels) and drove on
     trace: dict = field(default_factory=dict, repr=False)   # t, x, y, speed, steer, pedal, lat (numpy)
 
     @property
@@ -40,23 +41,30 @@ class LapResult:
         return min(self.lap_times[1:]) if len(self.lap_times) > 1 else float("nan")
 
 
-def eval_config(base: EnvConfig | None = None, max_time_s: float = 900.0) -> EnvConfig:
-    """The training config with every source of randomness switched off - and strict.
+def eval_config(base: EnvConfig | None = None, max_time_s: float = 900.0, strict: bool = True) -> EnvConfig:
+    """The training config with every source of randomness switched off - and, by default, strict.
 
     Strict means: leaving the track ends the run, even for drivers trained in
     limit-seeking mode (where training lets the car rejoin).  So "completed" and
     every recorded lap time always mean a CLEAN lap (engineering log WP25).
+
+    ``strict=False`` keeps self-recovery (race bot, WP61) if the config has it: the car may go onto the
+    grass and must rejoin by itself, as in a real race; the run ends only at the barrier (run-off: the
+    middle of the training range), facing the wrong way for long, or stuck.  ``LapResult.excursions``
+    then says how often it left the road.
     """
+    base = base or EnvConfig()
     one = (1.0, 1.0)
-    return replace(base or EnvConfig(), blind_prob=0.0, rand_grip=one, rand_mass=one, rand_power=one,
+    return replace(base, blind_prob=0.0, rand_grip=one, rand_mass=one, rand_power=one,
                    rand_aero=one, max_episode_s=max_time_s, standing_start_prob=0.0, recover_on_crash=False,
-                   vary_car=False)
+                   vary_car=False, self_recovery=base.self_recovery and not strict, recovery_start_prob=0.0,
+                   race_group=1)          # one car per circuit; the opponents input (if any) stays, empty
 
 
 @torch.no_grad()
 def evaluate(net, vp: VehicleParams, tracks: list[Track], device, laps: int = 2, cfg: EnvConfig | None = None,
              record: bool = False, blind: bool = False, grip: float = 1.0,
-             min_avg_speed: float = 8.0) -> list[LapResult]:
+             min_avg_speed: float = 8.0, strict: bool = True) -> list[LapResult]:
     """Drive ``laps`` laps on each track with the deterministic policy.
 
     A run is abandoned as "slow" once its average speed since the start is below
@@ -70,7 +78,7 @@ def evaluate(net, vp: VehicleParams, tracks: list[Track], device, laps: int = 2,
     # enough time for every lap at a crawl of 15 m/s (54 km/h): 900 s was too short for 2 laps of the
     # 20.8 km Nordschleife - a clean driver was stopped by "timeout" in lap 2 (WP60)
     longest = max(t.length for t in tracks)
-    cfg = eval_config(cfg, max_time_s=max(900.0, laps * longest / 15.0))
+    cfg = eval_config(cfg, max_time_s=max(900.0, laps * longest / 15.0), strict=strict)
     # A handful of cars is much faster on the CPU than on the GPU (the GPU has a
     # fixed cost per operation that only pays off with thousands of cars).
     device = torch.device(device)
@@ -101,6 +109,8 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
     dist = torch.zeros(n, device=env.device)
     vmax = torch.zeros(n, device=env.device)
     off_steps = torch.zeros(n, dtype=torch.long, device=env.device)
+    excursions = torch.zeros(n, dtype=torch.long, device=env.device)
+    was_out = torch.zeros(n, dtype=torch.bool, device=env.device)
     # Full telemetry for lap replays (mv/laps.py): what the car did and what it actually
     # received (steering/throttle/brake after the actuators), 25 times per second.
     fields = ("t", "s", "x", "y", "yaw", "speed", "steer", "thr", "brk", "gear", "pedal", "lat")
@@ -117,6 +127,10 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
         vmax = torch.where(live, torch.maximum(vmax, info["speed"]), vmax)
         over = torch.maximum(env.lat - env.w_left, -env.lat - env.w_right) + env.half_width
         off_steps += (live & (over > 0)).long()
+        # counted here, not read from the environment at the end: an ended run's car is reset (and counts from 0)
+        out_now = info["wheels_off"] >= 3
+        excursions += (live & out_now & ~was_out).long()
+        was_out = out_now
         if record:
             sim = env.sim
             snap = {"t": env.t_ep, "s": env.s_total, "x": sim.x, "y": sim.y, "yaw": sim.yaw, "speed": info["speed"],
@@ -149,6 +163,7 @@ def _run(net, vp, tracks, device, laps, cfg, record, blind, grip, min_avg_speed)
         out.append(LapResult(track=t.name, length_m=t.length, lap_times=lap_times[i], finished=reason[i] == "laps",
                              end_reason=reason[i], distance_m=float(dist[i]), max_speed=float(vmax[i]),
                              off_track_steps=int(off_steps[i]), recoveries=int(env.recoveries[i]),
+                             excursions=int(excursions[i]),
                              trace={k: np.asarray(v) for k, v in traces[i].items()} if record else {}))
     return out
 

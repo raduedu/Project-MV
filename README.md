@@ -30,6 +30,7 @@ diary of what was tried, what worked and what did not is
 | [`docs/engineering-log.md`](docs/engineering-log.md) | FS-style log: objective → approach → verification → problems → next steps |
 | [`docs/07-assetto-corsa-bridge.md`](docs/07-assetto-corsa-bridge.md) | Connecting to the running game; setup and verification checklist |
 | [`docs/08-reference-lap.md`](docs/08-reference-lap.md) | Physics reference lap (g-g-v diagram, racing line, speed profile) |
+| [`docs/09-race-bot.md`](docs/09-race-bot.md) | The race bot: a driver to race against in the game, learning a circuit from nothing |
 | [`docs/fs-rules-dv-summary.md`](docs/fs-rules-dv-summary.md) | Formula Student 2027 driverless rules digest with rule numbers |
 | [`docs/vehicle-data-sources.md`](docs/vehicle-data-sources.md) | Where every number in `vehicles/library/` comes from |
 | [`docs/glossary.md`](docs/glossary.md) | Plain-language explanations of every technical term used |
@@ -94,6 +95,8 @@ Ctrl+C to leave), `mvctl pause`, `mvctl resume`, `mvctl help`.
 | Train on many cars at once | `scripts\train.py --vehicle @favourites,@racing,-fs_generic_ev ...` (catalogue groups, see below) |
 | Race a real F1 lap in equal machinery | `scripts\f1_benchmark.py` (fetch, align, fit the car), then `scripts\f1_benchmark.py --race runs\<run>\best.pt` - private data, never committed (D-038, log WP43) |
 | Show a car the game does not have (e.g. the FS electric car) | it is drawn with a stand-in body from `vehicles/ac_stand_ins.yaml` (FS car -> Tatuus FA1); View in Assetto Corsa then works for its laps on imported circuits |
+| **Race the bot** in the game (you car 0, bot car 1, same car) | `scripts\race_bot.py --policy runs\race_v3_racing\best.pt --track ks_nordschleife__nordschleife --vehicle ks_porsche_911_gt3_rs --start-game --laps 3` (once: run `mv\ac\plugin\install_plugin.ps1`, enable the *MV Race Bot* app; first try `--dry-run`; docs/09) |
+| Race the bot against copies of itself in our simulator | `scripts\race_eval.py --policy runs\<run>\best.pt --tracks spa,monza` |
 | Run the tests | `-m pytest tests -q` |
 | Publish / update the private GitHub repo | `powershell -ExecutionPolicy Bypass -File scripts\publish_github.ps1` |
 

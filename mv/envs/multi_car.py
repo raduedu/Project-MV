@@ -61,6 +61,10 @@ class MultiCarEnv:
                         ep_len=torch.cat(ep_len), ep_dist=torch.cat(ep_dist))
         return torch.cat(obs), torch.cat(rew), torch.cat(term), torch.cat(trunc), info
 
+    def use_cuda_graph(self, on: bool = True) -> None:
+        for env in self.envs:
+            env.use_cuda_graph(on)
+
     def tracks_replaced(self, track_ids: torch.Tensor) -> None:
         for env in self.envs:
             env.tracks_replaced(track_ids)

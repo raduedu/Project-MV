@@ -76,6 +76,14 @@ topic. Where a term has a symbol in the code it is given in `code font`.
 | Lidar | A sensor that measures distance along rays. Here: distance to the track edge along 19 directions. |
 | Track limits | The rule for how far off the track a car may go. Here (strict): no part of the body over the edge. |
 | Standing / flying lap | A lap from a standstill on the start line / a lap entered at full speed. |
+| Run-off | The area past the track edge (grass, gravel) before the barrier. In self-recovery training (WP61) it is 2-20 m wide, drawn per episode; reaching its end ends the episode. |
+| Ploughing drag | The force that slows a car rolling through grass or gravel: the wheels push the surface aside. Modelled as a share of each wheel's load (0.02-0.30), acting against the direction of motion and not through the tyres. |
+| Excursion | One trip off the road: three or more wheels past the edge, then (if all goes well) back on. AC invalidates a lap at three wheels out. |
+| Self-recovery | Training mode where leaving the road does not end the episode or put the car back: the driver must rejoin by itself (race bot stage 2, WP61). |
+| Own map | The stretch of circuit the car's sensors have already seen, remembered and shown as track preview on later laps (WP62). |
+| Self-play | Training against copies of oneself: every car in a race is the same driver, so opponents get better as the driver does (WP64). |
+| Restitution | How bouncy a collision is: 0 = the bodies stick together, 1 = they bounce apart as fast as they met. Car contacts use 0.3. |
+| CUDA graph | A recording of a sequence of GPU operations that can be replayed with one command, saving the cost of launching each one from Python (WP63). |
 
 ## Assetto Corsa
 

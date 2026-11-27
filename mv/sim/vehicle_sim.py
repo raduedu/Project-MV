@@ -12,6 +12,8 @@ generate the forces.  What is modelled:
 * Vertical load on each tyre: static weight, aerodynamic downforce, and
   load transfer under acceleration, braking and cornering.
 * Aerodynamic drag, rolling resistance.
+* The surface under each wheel (set by the environment, race bot stage 2): grass or
+  gravel gives that tyre less grip, and gravel/grass "ploughing" slows the car down.
 * Powertrain: any number of engines/motors, multi-speed gearboxes with shift
   time, rev limiter, engine braking, battery power limits and state of charge.
 * Brakes with front/rear bias, ABS and traction control as *force limits*.
@@ -132,6 +134,13 @@ class VehicleSim:
         self.aero_scale = torch.ones(num_envs, device=dev)
         self.df_scale = torch.ones(num_envs, device=dev)          # downforce only (car variation)
         self.drag_scale = torch.ones(num_envs, device=dev)        # drag only (car variation)
+        # Surface under each wheel (race bot stage 2, engineering log WP61).  The environment sets these
+        # from where each wheel is; on the road they stay 1 and 0, so nothing changes there.
+        #   surface_grip: tyre grip on this surface / grip on the road (grass ~0.4-0.6, gravel ~0.5)
+        #   surface_drag: ploughing resistance as a share of the wheel's load (gravel bed up to ~0.3,
+        #                 i.e. ~3 m/s^2 of extra deceleration on top of what the tyres do)
+        self.surface_grip = torch.ones(num_envs, 4, device=dev)
+        self.surface_drag = torch.zeros(num_envs, 4, device=dev)
         # diagnostics refreshed every step
         self.tire_util = torch.zeros(num_envs, 4, device=dev)    # combined slip of each tyre; 1.0 = peak grip
         self.slip = torch.zeros(num_envs, 4, device=dev)         # slip angle of each tyre (rad)
@@ -236,6 +245,8 @@ class VehicleSim:
         self.soc[ids] = self.soc_init
         self.slip[ids] = 0.0
         self.tire_util[ids] = 0.0
+        self.surface_grip[ids] = 1.0
+        self.surface_drag[ids] = 0.0
 
     # ------------------------------------------------------------------------
     def _powertrain(self, v: torch.Tensor, thr: torch.Tensor, brk: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -348,8 +359,9 @@ class VehicleSim:
 
         # ---- grip available right now --------------------------------------------
         load = fz / self.fz_ref[None]
-        d_lat = self.mu_lat[None] * load.pow(self.exp_lat[None]) * fz * self.grip[:, None]
-        d_long = self.mu_long[None] * load.pow(self.exp_long[None]) * fz * self.grip[:, None]
+        grip = self.grip[:, None] * self.surface_grip                     # per car, times the surface per wheel
+        d_lat = self.mu_lat[None] * load.pow(self.exp_lat[None]) * fz * grip
+        d_long = self.mu_long[None] * load.pow(self.exp_long[None]) * fz * grip
 
         # ---- longitudinal force each wheel is asked to deliver ----------------------
         t_front, t_rear = self._powertrain(vx.clamp(min=0.0), self.thr, self.brk)
@@ -389,8 +401,14 @@ class VehicleSim:
         fxb = fx * cd - fy * sd
         fyb = fx * sd + fy * cd
         drag = self.drag_k * self.aero_scale * self.drag_scale * vx * vx.abs()
-        ax_body = (fxb.sum(1) - drag) / mass
-        ay_body = fyb.sum(1) / mass
+        # Ploughing through grass or gravel: a force against the direction the car moves (also when it
+        # slides sideways), not through the tyres - so it does not use up their grip.  Smoothly zero
+        # at standstill (no chatter).
+        plough = (self.surface_drag * fz).sum(1)
+        speed = torch.sqrt(speed2 + 1e-6)
+        k_pl = plough * torch.tanh(speed / 0.5) / speed
+        ax_body = (fxb.sum(1) - drag - k_pl * vx) / mass
+        ay_body = (fyb.sum(1) - k_pl * vy) / mass
         mz = (self.wheel_x[None] * fyb - self.wheel_y[None] * fxb).sum(1)
 
         # ---- integrate ------------------------------------------------------------------

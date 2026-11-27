@@ -8,7 +8,9 @@ This is the "game" the learning algorithm plays.  Each control step
 2. advances the physics (:class:`mv.sim.vehicle_sim.VehicleSim`),
 3. works out where each car is relative to its track,
 4. computes a reward (metres of progress, minus penalties) and decides whether
-   the episode is over (left the track, spun, stalled, time limit),
+   the episode is over (left the track, spun, stalled, time limit; with
+   ``self_recovery`` only the barrier past the run-off, facing the wrong way
+   for long, or being stuck end it - the driver must rejoin by itself),
 5. builds the observation the driver sees next.
 
 What the driver sees (the observation)
@@ -124,6 +126,35 @@ class EnvConfig:
     max_recoveries: int = 6                      # after this many offs the episode does end
     lap_memory: bool = False                     # per track section: last lap's min speed, closeness to the limit, offs
     lap_memory_cell_m: float = 5.0               # length of one remembered section
+    # --- self-recovery (race bot stage 2, engineering log WP61) ---
+    # Leaving the road no longer ends the episode or teleports the car back: beyond the edge is grass or
+    # gravel (less grip per wheel, ploughing drag) up to a barrier, and the driver must rejoin by itself.
+    # The episode ends only at the barrier, after facing the wrong way for long, or when stuck.  Nothing
+    # is added to the observation: the driver already sees how far past the edge it is, its heading,
+    # and (memory) how the car responds - exactly what a real car has.
+    self_recovery: bool = False
+    offroad_grip: tuple[float, float] = (0.35, 0.70)     # grip off the road / on it, per episode (wet grass .. gravel)
+    offroad_drag: tuple[float, float] = (0.02, 0.30)     # ploughing resistance / wheel load, per episode
+    runoff_m: tuple[float, float] = (2.0, 20.0)          # room past the edge before the barrier, per episode
+    wrong_way_time_s: float = 8.0                # facing more than max_heading_error_rad the wrong way this long = lost
+    recovery_stall_time_s: float = 10.0          # slower than stall_speed this long = stuck
+    recovery_start_prob: float = 0.1             # share of episodes that START off the road / spun (practice)
+    # --- own map (race bot stage 3, engineering log WP62) ---
+    # The car remembers the stretch of track its sensors have already seen; on later laps the track preview
+    # shows the remembered shape beyond the sensor range (and the horizon input grows to match).  Nothing is
+    # added to the observation: a remembered stretch looks exactly like one seen with a long preview.
+    own_map: bool = False
+    # --- racing others (race bot stage 4, engineering log WP64) ---
+    # Cars run in groups of race_group on the same circuit (self-play: every car is the same driver).  A
+    # restarted car is placed close to a group mate, so they meet often.  Cars collide (simple impulse
+    # model).  The driver sees the `opponents` nearest cars within its sensor range (0 = no such input).
+    race_group: int = 1                          # cars per race (1 = alone)
+    opponents: int = 0                           # opponent slots in the observation (changes its size)
+    opponent_back_m: float = 30.0                # how far behind other cars are seen (mirrors / side sensors)
+    spawn_near_prob: float = 0.7                 # share of restarts placed near a group mate
+    spawn_gap_m: tuple[float, float] = (8.0, 60.0)   # distance to that mate, ahead or behind
+    contact_restitution: float = 0.3             # bounce: 0 = cars stick together, 1 = perfectly elastic
+    contact_penalty: float = 1.0                 # per 10 m/s of closing speed at contact; doubled for the car behind
 
 
 def _wrap_angle(a: torch.Tensor) -> torch.Tensor:
@@ -193,12 +224,34 @@ class RacingEnv:
         self.ep_return, self.ep_len = z(), z()
         self.fixed_start: tuple[int, float] | None = None      # (point index, speed) for evaluation runs
         self.recoveries = z(torch.long)
+        # self-recovery: this episode's off-road surface and run-off, and what happened
+        self.off_grip, self.off_drag = torch.ones(num_envs, device=dev), z()
+        self.runoff = torch.full((num_envs,), 1e6, device=dev)
+        self.wrong_t = z()                              # seconds facing the wrong way
+        self.wheels_off = z(torch.long)                 # wheels on grass/gravel right now
+        self.excursions = z(torch.long)                 # times the car left the road (3 or more wheels off)
+        # own map: the sensors have seen the track from the episode's start point up to this distance (m,
+        # counted like s_total, i.e. it keeps growing past one lap)
+        self.map_reach = z()
+        # racing others: groups of race_group consecutive cars share a circuit
+        G = max(int(cfg.race_group), 1)
+        assert num_envs % G == 0, f"{num_envs} cars cannot be split into races of {G}"
+        self.G = G
+        self.group_tid = torch.randint(0, tracks.num_tracks, (num_envs // G,), device=dev, generator=self.gen)
+        self.contacts = z(torch.long)                   # contacts this episode
+        # each body as three circles along its length (front, middle, rear), radius = half the width
+        r_body = 0.5 * vp.chassis.width_m
+        reach = max(0.5 * vp.chassis.length_m - r_body, 0.0)
+        self.body_r = r_body
+        self.circle_off = torch.tensor([reach, 0.0, -reach], device=dev)
         self.cell_pts = max(int(round(cfg.lap_memory_cell_m / ds)), 1)
         n_cells = tracks.m_max // self.cell_pts + 2 if cfg.lap_memory else 1
         self.mem_v = torch.full((num_envs, n_cells), -1.0, device=dev)   # slowest speed in the section last lap (-1 = none)
         self.mem_u = torch.zeros(num_envs, n_cells, device=dev)          # highest grip use there (3 = went off)
         self.mem_lap = torch.full((num_envs, n_cells), -1, device=dev, dtype=torch.long)
 
+        self._graph = None                                         # see use_cuda_graph()
+        self.n_gears_f = float(max(int(self.sim.gb_ngears[0]) - 1, 1))   # read once: no GPU->CPU copy per step
         self.car_desc = self._car_descriptor()
         self.desc_factor = torch.ones(num_envs, len(self.car_desc), device=dev)   # car variation, per car
         self.num_actions = 2
@@ -213,6 +266,8 @@ class RacingEnv:
             sizes.append(("history", cfg.history_steps * 15))
         if cfg.lap_memory:
             sizes.append(("lap_memory", 3 * len(cfg.lookahead_m)))
+        if cfg.opponents > 0:
+            sizes.append(("opponents", 5 * cfg.opponents))
         self.obs_layout, start = {}, 0
         for key, size in sizes:
             self.obs_layout[key] = slice(start, start + size)
@@ -244,6 +299,13 @@ class RacingEnv:
             return
         cfg, tr, dev = self.cfg, self.tracks, self.device
         tid = torch.randint(0, tr.num_tracks, (k,), device=dev, generator=self.gen)
+        racing = self.G > 1 and self.fixed_start is None
+        if racing:
+            # a race's first car picks the next circuit when it restarts; the others follow at their own restart
+            g = torch.div(ids, self.G, rounding_mode="floor")
+            lead = (ids % self.G) == 0
+            self.group_tid[g[lead]] = tid[lead]
+            tid = self.group_tid[g]
         if self.fixed_start is not None:
             tid = ids % tr.num_tracks
             idx = torch.full((k,), self.fixed_start[0], device=dev, dtype=torch.long) % tr.n[tid]
@@ -263,6 +325,40 @@ class RacingEnv:
             room = (torch.minimum(tr.w_left[tid, idx], tr.w_right[tid, idx]) - self.half_width).clamp(min=0.0)
             lat0 = room * self._rand(k, -0.6, 0.6)
             yaw_noise = self._rand(k, -0.04, 0.04)
+        if racing:
+            # Most restarts go close to a group mate already on this circuit - ahead or behind, at about its
+            # speed - so the cars actually race each other instead of lapping alone on a big circuit.
+            G = self.G
+            mate = g * G + (ids % G + 1 + torch.randint(0, G - 1, (k,), device=dev, generator=self.gen)) % G
+            near = (self._rand(k, 0, 1) < cfg.spawn_near_prob) & (self.tid[mate] == tid) & (self.t_ep[mate] > 0)
+            gap = self._rand(k, *cfg.spawn_gap_m) * torch.where(self._rand(k, 0, 1) < 0.5, -1.0, 1.0)
+            idx_near = torch.remainder(self.idx[mate] + torch.round(gap / tr.ds_each[tid]).long(), tr.n[tid])
+            idx = torch.where(near, idx_near, idx)
+            v_mate = torch.sqrt(self.sim.vx[mate] ** 2 + self.sim.vy[mate] ** 2) * self._rand(k, 0.85, 1.05)
+            v0 = torch.where(near, torch.minimum(v_mate, self._feasible_speed(tid, idx)), v0)
+            room = (torch.minimum(tr.w_left[tid, idx], tr.w_right[tid, idx]) - self.half_width).clamp(min=0.0)
+            lat0 = torch.where(near, room * self._rand(k, -0.8, 0.8), lat0)
+        if cfg.self_recovery:
+            # this episode's run-off: what is past the edge, and how far until the barrier
+            if self.fixed_start is not None:               # evaluation: the middle of each range
+                mid = lambda r: torch.full((k,), 0.5 * (r[0] + r[1]), device=dev)  # noqa: E731
+                og, od, ro = mid(cfg.offroad_grip), mid(cfg.offroad_drag), mid(cfg.runoff_m)
+            else:
+                og, od, ro = self._rand(k, *cfg.offroad_grip), self._rand(k, *cfg.offroad_drag), self._rand(k, *cfg.runoff_m)
+                # Practice: some episodes start where a mistake would have left the car - on the grass, at any
+                # angle (up to fully backwards), at up to 60 % of the speed it could carry here.  Real mistakes
+                # are rare once the driver is good; these keep "how to get back" in practice.
+                practice = self._rand(k, 0, 1) < cfg.recovery_start_prob
+                if practice.any():
+                    left = self._rand(k, 0, 1) < 0.5
+                    edge = torch.where(left, tr.w_left[tid, idx], tr.w_right[tid, idx])
+                    out = self._rand(k, 0.2, 0.9) * (ro - self.half_width).clamp(min=0.0)   # centre past the edge, m
+                    lat0 = torch.where(practice, torch.where(left, edge + out, -(edge + out)), lat0)
+                    yaw_noise = torch.where(practice, self._rand(k, -math.pi, math.pi), yaw_noise)
+                    v0 = torch.where(practice, self._feasible_speed(tid, idx) * self._rand(k, 0.0, 0.6), v0)
+            self.off_grip[ids], self.off_drag[ids], self.runoff[ids] = og, od, ro
+        self.wrong_t[ids], self.wheels_off[ids], self.excursions[ids], self.contacts[ids] = 0.0, 0, 0, 0
+        self.map_reach[ids] = 0.0                      # grows from the first step on, with the sensor range then
         psi = tr.psi[tid, idx]
         p = tr.xy[tid, idx]
         x = p[:, 0] - torch.sin(psi) * lat0
@@ -334,6 +430,114 @@ class RacingEnv:
         self.prev_steer_delta[ids] = 0.0
         self.steer_cmd[ids] = 0.0
         self.reset_history(ids)
+        self.wrong_t[ids] = 0.0
+
+    def _update_surface(self) -> None:
+        """Self-recovery: tell the physics which wheels are on grass/gravel (once per decision).
+
+        A wheel at (x_b, y_b) in the car's frame sits ``lat + x_b*sin(e) + y_b*cos(e)`` metres left of
+        the centre line, where ``e`` is the car's angle to the road.  Past the left or right edge, that
+        tyre gets this episode's off-road grip and ploughing drag.  Checked every 0.04 s (the car moves
+        at most ~3 m in that time); exact enough for grass, which has no sharp line either.
+        """
+        if not self.cfg.self_recovery:
+            return
+        sim = self.sim
+        se, ce = torch.sin(self.head_err)[:, None], torch.cos(self.head_err)[:, None]
+        wl = self.lat[:, None] + sim.wheel_x[None] * se + sim.wheel_y[None] * ce
+        out = (wl > self.w_left[:, None]) | (wl < -self.w_right[:, None])
+        sim.surface_grip = torch.where(out, self.off_grip[:, None], torch.ones_like(wl))
+        sim.surface_drag = torch.where(out, self.off_drag[:, None], torch.zeros_like(wl))
+        self.wheels_off = out.long().sum(1)
+
+    # ------------------------------------------------------------------------
+    def _gap_ahead(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """For every pair in each race: how far car j is ahead of car i along the track (m, negative =
+        behind; the shorter way round the lap), and whether both are on the same circuit.
+        Shapes (races, G, G); [b, i, j] is car j as seen from car i."""
+        B, G = self.n // self.G, self.G
+        s = (self.idx.float() * self.tracks.ds_each[self.tid] + self.along).view(B, G)
+        length = self.tracks.length[self.tid].view(B, G)
+        tid = self.tid.view(B, G)
+        gap = torch.remainder(s[:, None, :] - s[:, :, None] + 0.5 * length[:, :, None], length[:, :, None]) \
+            - 0.5 * length[:, :, None]
+        eye = torch.eye(G, dtype=torch.bool, device=self.device)[None]
+        same = (tid[:, None, :] == tid[:, :, None]) & ~eye
+        return gap, same
+
+    def _collide(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Contacts between cars of the same race (once per decision, after the physics).
+
+        Each body is three circles along its length.  Where two overlap, the cars are pushed apart and get
+        an impulse along the line between the circle centres, as in a collision of two rigid bodies with
+        some bounce (``contact_restitution``); the impulse acts at the contact point, so it also turns the
+        car.  Crude, but it makes contact cost what it costs on track: speed, direction, often a spin.
+        Returns per car the closing speed at contact (m/s, 0 = none) and the part of it where this car
+        was the one behind (rear-ending is the usual fault in racing).
+        """
+        sim, B, G = self.sim, self.n // self.G, self.G
+        r = self.body_r
+        c, s = torch.cos(sim.yaw), torch.sin(sim.yaw)
+        cx = (sim.x[:, None] + c[:, None] * self.circle_off[None]).view(B, G, 3)
+        cy = (sim.y[:, None] + s[:, None] * self.circle_off[None]).view(B, G, 3)
+        dx = cx[:, :, None, :, None] - cx[:, None, :, None, :]           # (B, i, j, circle of i, circle of j)
+        dy = cy[:, :, None, :, None] - cy[:, None, :, None, :]
+        d = torch.sqrt(dx * dx + dy * dy).clamp(min=1e-3)
+        gap, same = self._gap_ahead()
+        pen = ((2 * r - d) * same[..., None, None].float()).reshape(B, G, G, 9)
+        depth, k = pen.max(-1)                                             # deepest overlap of each pair
+        touch = depth > 0
+        nx = torch.gather((dx / d).reshape(B, G, G, 9), -1, k[..., None]).squeeze(-1)   # from j towards i
+        ny = torch.gather((dy / d).reshape(B, G, G, 9), -1, k[..., None]).squeeze(-1)
+        vxw = (sim.vx * c - sim.vy * s).view(B, G)
+        vyw = (sim.vx * s + sim.vy * c).view(B, G)
+        v_n = (vxw[:, :, None] - vxw[:, None, :]) * nx + (vyw[:, :, None] - vyw[:, None, :]) * ny   # < 0: closing
+        m = (self.vp.chassis.mass_kg * sim.mass_scale).view(B, G)
+        inertia = (self.vp.chassis.yaw_inertia_kgm2 * sim.mass_scale).view(B, G)
+        closing = (-v_n).clamp(min=0.0) * touch.float()
+        J = (1.0 + self.cfg.contact_restitution) * closing / (1.0 / m[:, :, None] + 1.0 / m[:, None, :])
+        fx, fy = J * nx, J * ny                                            # impulse on i from j (N s)
+        # contact point relative to i's centre: its circle centre, then r towards j
+        off_i = self.circle_off[torch.div(k, 3, rounding_mode="floor")]
+        ci, si = c.view(B, G)[:, :, None], s.view(B, G)[:, :, None]
+        px, py = ci * off_i - r * nx, si * off_i - r * ny
+        dvx, dvy = fx.sum(2) / m, fy.sum(2) / m
+        dr = (px * fy - py * fx).sum(2) / inertia
+        push = 0.5 * depth * touch.float()                                 # separate the bodies
+        vxw, vyw = vxw + dvx, vyw + dvy
+        cf, sf = c.view(B, G), s.view(B, G)
+        sim.vx = (vxw * cf + vyw * sf).reshape(-1)
+        sim.vy = (-vxw * sf + vyw * cf).reshape(-1)
+        sim.r = sim.r + dr.reshape(-1)
+        sim.x = sim.x + (push * nx).sum(2).reshape(-1)
+        sim.y = sim.y + (push * ny).sum(2).reshape(-1)
+        behind = (gap > 0).float()                                         # j is ahead of i
+        return closing.sum(2).reshape(-1), (closing * behind).sum(2).reshape(-1)
+
+    def _opponents(self, ids: torch.Tensor) -> torch.Tensor:
+        """The ``opponents`` nearest other cars of the race that the sensors can see: up to the sensor
+        range ahead, ``opponent_back_m`` behind.  Per slot (nearest first): seen (1/0), how far ahead
+        (m / 50, negative = behind), how far to its left (m / 5), how much faster along the track
+        (m/s / 10), and the angle between the two cars (sin).  Empty slots are all zero."""
+        K, B, G = self.cfg.opponents, self.n // self.G, self.G
+        gap, same = self._gap_ahead()
+        rng = self.lidar_range.view(B, G)[:, :, None]
+        seen = same & (gap <= rng) & (gap >= -self.cfg.opponent_back_m)
+        key = torch.where(seen, gap.abs(), torch.full_like(gap, 1e9))
+        kk = min(K, G)
+        near_d, j = torch.topk(key, kk, dim=-1, largest=False)                # (B, G, kk)
+        ok = (near_d < 1e8).float()
+        pick = lambda v: torch.gather(v[:, None, :].expand(B, G, G), -1, j)   # noqa: E731  value of car j
+        lat, head = self.lat.view(B, G), self.head_err.view(B, G)
+        v_along = (self.sim.vx * torch.cos(self.head_err)).view(B, G)
+        feats = torch.stack([ok,
+                             torch.gather(gap, -1, j) / 50.0 * ok,
+                             (pick(lat) - lat[:, :, None]) / 5.0 * ok,
+                             (pick(v_along) - v_along[:, :, None]) / 10.0 * ok,
+                             torch.sin(pick(head) - head[:, :, None]) * ok], -1)  # (B, G, kk, 5)
+        out = torch.zeros(B, G, K, 5, device=self.device)
+        out[:, :, :kk] = feats
+        return out.reshape(self.n, K * 5)[ids]
 
     # ------------------------------------------------------------------------
     def grip_use(self) -> torch.Tensor:
@@ -466,7 +670,7 @@ class RacingEnv:
     def _car_state(self, ids: torch.Tensor) -> torch.Tensor:
         sim = self.sim
         vx = sim.vx[ids]
-        n_gears = float(max(int(sim.gb_ngears[0]) - 1, 1))
+        n_gears = self.n_gears_f
         slip = sim.wheel_slip_angles()[ids]          # from the current state, as a real car would compute it
         return torch.stack([
             vx / 50.0, sim.vy[ids] / 5.0, sim.r[ids], sim.ax[ids] / 15.0, sim.ay[ids] / 15.0,
@@ -496,10 +700,22 @@ class RacingEnv:
         pick = k_all.abs().argmax(-1, keepdim=True)
         k_peak = k_all.gather(-1, pick).squeeze(-1)                                  # signed tightest curvature
         w_min = (tr.w_left[tid[:, None, None], widx] + tr.w_right[tid[:, None, None], widx]).amin(-1)
-        seen = (self.look_m[None] <= self.horizon[ids][:, None]).float()
+        view = self.horizon[ids]
+        seen = self.look_m[None] <= view[:, None]
+        if cfg.own_map:
+            # A stretch ending d metres ahead is on the map if the sensors already saw that point: within
+            # map_reach of this episode's start.  The map is one unbroken stretch from the start, so it can
+            # only reach past the start line again once a whole lap has been seen - then it is complete.
+            ahead = self.s_total[ids][:, None] + self.look_m[None]
+            reach = self.map_reach[ids][:, None]
+            seen = seen | (ahead <= reach) | (reach >= tr.length[tid][:, None])
+            seen = torch.cumprod(seen.float(), 1).bool()               # only an unbroken stretch from the car
+            known_to = (self.look_m[None] * seen).amax(1)
+            view = torch.where(seen.all(1), torch.full_like(view, 1e6), torch.maximum(view, known_to))
+        seen = seen.float()
         kappa = (k_peak * 25.0).clamp(-3, 3) * seen
         width = w_min / 15.0 * seen
-        horizon = (self.horizon[ids] / self.look_m[-1]).clamp(max=1.0)[:, None]
+        horizon = (view / self.look_m[-1]).clamp(max=1.0)[:, None]
         lidar = torch.sqrt(self._lidar(ids) / cfg.lidar_range_m)   # sqrt: finer resolution up close
         desc = self.car_desc[None] * self.desc_factor[ids]
         parts = [car, self.prev_action[ids], pos, kappa, width, horizon, lidar, desc]
@@ -514,6 +730,8 @@ class RacingEnv:
             v_min = torch.where(known, mv, torch.full_like(mv, 1e3)).amin(-1)
             u_max = torch.where(known, mu_, torch.zeros_like(mu_)).amax(-1)
             parts += [torch.where(any_known, v_min / 50.0, torch.zeros_like(v_min)), u_max, any_known.float()]
+        if cfg.opponents > 0:
+            parts.append(self._opponents(ids))
         obs = torch.cat(parts, 1)
         return obs.clamp(-cfg.obs_clip, cfg.obs_clip)
 
@@ -537,7 +755,48 @@ class RacingEnv:
         ``truncated``  = it merely ran out of time.  ``info["final_obs"]`` holds
         the last observation of episodes that just ended, which the learner
         needs to treat time-outs correctly.
+
+        Split in two (WP63): ``_step_core`` does the same work for every car every time (physics,
+        reward, end-of-episode flags, observation) and can be replayed as a CUDA graph
+        (:meth:`use_cuda_graph`); the rest - putting cars back, restarting ended episodes - depends on
+        how many cars it concerns and runs normally.
         """
+        if self._graph is not None:
+            out = self._graph(action)
+        else:
+            out = self._step_core(action)
+        obs, reward, terminated, truncated, recover, done, bad, off, spun, stalled, lap_done, lap_time, speed, \
+            progress, wheels_off, contact = out
+        rec = recover.nonzero(as_tuple=False).squeeze(1)
+        if len(rec) > 0:                                 # limit-seeking put-back, then what the car sees there
+            self._recover(rec)
+            obs[rec] = self._observe(rec)
+        info: dict = {"off": off, "spun": spun, "stalled": stalled, "lap_done": lap_done, "lap_time": lap_time,
+                      "speed": speed, "progress": progress, "recovered": recover, "wheels_off": wheels_off,
+                      "contact": contact}
+        ids = done.nonzero(as_tuple=False).squeeze(1)
+        if len(ids) > 0:
+            sim = self.sim
+            info["final_obs"] = torch.nan_to_num(obs[ids])
+            info["done_ids"] = ids
+            info["ep_return"] = self.ep_return[ids].clone()
+            info["ep_len"] = self.ep_len[ids].clone()
+            info["ep_dist"] = self.s_total[ids].clone()
+            if bad.any():       # scrub non-finite state before re-using those slots
+                b = bad.nonzero(as_tuple=False).squeeze(1)
+                for a in (sim.x, sim.y, sim.yaw, sim.vx, sim.vy, sim.r, sim.ax, sim.ay, sim.steer, sim.thr, sim.brk):
+                    a[b] = 0.0
+            self.reset(ids)
+            obs[ids] = self._observe(ids)
+        return obs, reward, terminated, truncated, info
+
+    def use_cuda_graph(self, on: bool = True) -> None:
+        """Replay the fixed part of each step as a CUDA graph (GPU only; same results, faster - WP63)."""
+        from mv.envs.cuda_graph import GraphedFunction
+        self._graph = GraphedFunction(self._step_core, [self, self.sim]) if on and self.device.type == "cuda" else None
+
+    def _step_core(self, action: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """The part of a step that is the same work for every car: no CPU round trips in here."""
         cfg, sim = self.cfg, self.sim
         action = action.clamp(-1.0, 1.0)
         steer, pedal = action[:, 0], action[:, 1]
@@ -546,12 +805,21 @@ class RacingEnv:
             self.steer_cmd = self.steer_cmd + (steer - self.steer_cmd) * k
             steer = self.steer_cmd
         thr, brk = pedal.clamp(min=0.0), (-pedal).clamp(min=0.0)
+        was_out = self.wheels_off >= 3
+        self._update_surface()
         for _ in range(cfg.substeps):
             sim.step(steer, thr, brk)
+        if self.G > 1:                             # cars of the same race touching
+            closing, at_fault = self._collide()
+            self.contacts += (closing > 0).long()
+        else:
+            closing = at_fault = torch.zeros_like(self.t_ep)
         progress = self._locate()
         self.t_ep += cfg.control_dt
         self.ep_len += 1
         lap_done = self.advance_laps(progress)
+        if cfg.own_map:                            # everything up to the sensor range is now on the map
+            self.map_reach = torch.maximum(self.map_reach, self.s_total + self.horizon.clamp(max=1e5))
 
         # ---- reward -------------------------------------------------------------
         over = (torch.maximum(self.lat - self.w_left, -self.lat - self.w_right) + self.half_width)  # body over the edge (m)
@@ -563,17 +831,31 @@ class RacingEnv:
         reward = (cfg.progress_scale * progress
                   - cfg.edge_penalty * over_pos.clamp(max=3.0) - cfg.edge_penalty_const * (over > 0).float()
                   - cfg.smooth_penalty * jerk - cfg.steer_penalty * steer_jerk
-                  - cfg.steer_zigzag_penalty * zigzag)
+                  - cfg.steer_zigzag_penalty * zigzag
+                  - cfg.contact_penalty * (closing + at_fault) / 10.0)
 
         # ---- end of episode? -------------------------------------------------------
         speed = torch.sqrt(sim.vx ** 2 + sim.vy ** 2)
         self.stall_t = torch.where(speed < cfg.stall_speed, self.stall_t + cfg.control_dt, torch.zeros_like(self.stall_t))
-        off = over > self.half_width + cfg.off_track_margin_m
-        spun = self.head_err.abs() > cfg.max_heading_error_rad
-        stalled = self.stall_t > cfg.stall_time_s
         bad = ~torch.isfinite(sim.vx + sim.vy + sim.r + sim.x + sim.y)
-        crash = off | spun | stalled
-        self.update_lap_memory(crash)
+        if cfg.self_recovery:
+            # Off the road is the driver's problem to solve, not the end: only the barrier at the end of
+            # the run-off, facing the wrong way for long, or being stuck end the episode.
+            out_now = self.wheels_off >= 3
+            self.excursions += (out_now & ~was_out).long()
+            off = over > self.runoff                                     # the body reached the barrier
+            wrong = self.head_err.abs() > cfg.max_heading_error_rad
+            self.wrong_t = torch.where(wrong, self.wrong_t + cfg.control_dt, torch.zeros_like(self.wrong_t))
+            spun = self.wrong_t > cfg.wrong_way_time_s
+            stalled = self.stall_t > cfg.recovery_stall_time_s
+            crash = off | spun | stalled
+            self.update_lap_memory(crash | out_now)                      # "went off here" for next lap
+        else:
+            off = over > self.half_width + cfg.off_track_margin_m
+            spun = self.head_err.abs() > cfg.max_heading_error_rad
+            stalled = self.stall_t > cfg.stall_time_s
+            crash = off | spun | stalled
+            self.update_lap_memory(crash)
         if cfg.recover_on_crash:
             # limit-seeking: a mistake costs the penalty and the time lost; then try again
             self.recoveries += crash.long()
@@ -590,23 +872,7 @@ class RacingEnv:
         self.prev_steer_delta = steer_delta
         self.ep_return += reward
         self.push_history()
-
         done = terminated | truncated
-        self._recover(recover.nonzero(as_tuple=False).squeeze(1))
-        info: dict = {"off": off, "spun": spun, "stalled": stalled, "lap_done": lap_done,
-                      "lap_time": self.last_lap_time, "speed": speed, "progress": progress, "recovered": recover}
         obs = self.observe()
-        ids = done.nonzero(as_tuple=False).squeeze(1)
-        if len(ids) > 0:
-            info["final_obs"] = torch.nan_to_num(obs[ids])
-            info["done_ids"] = ids
-            info["ep_return"] = self.ep_return[ids].clone()
-            info["ep_len"] = self.ep_len[ids].clone()
-            info["ep_dist"] = self.s_total[ids].clone()
-            if bad.any():       # scrub non-finite state before re-using those slots
-                b = bad.nonzero(as_tuple=False).squeeze(1)
-                for a in (sim.x, sim.y, sim.yaw, sim.vx, sim.vy, sim.r, sim.ax, sim.ay, sim.steer, sim.thr, sim.brk):
-                    a[b] = 0.0
-            self.reset(ids)
-            obs[ids] = self._observe(ids)
-        return obs, reward, terminated, truncated, info
+        return (obs, reward, terminated, truncated, recover, done, bad, off, spun, stalled, lap_done,
+                self.last_lap_time.clone(), speed, progress, self.wheels_off.clone(), closing)

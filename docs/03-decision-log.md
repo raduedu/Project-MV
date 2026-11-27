@@ -547,3 +547,69 @@ supersedes it — do not edit history.*
   same car model. (3) Recovery is learned (no teleports), overtaking by self-play in our simulator.
 * **Why.** A preview of the whole track is a map; a real car racing an unknown circuit has sensors.
   Driving an AI slot keeps the game's own physics for both cars - equal machinery by construction.
+
+### D-045 — Going off the road is physics, not a penalty or a restart (race bot stage 2)
+
+* **Context.** Limit-seeking training (WP21) put a car that left the road straight back on it, at the
+  same place and pointing the right way. With short sensors (WP60) `race_v1_sensor` learned that going
+  off is cheap: about one off per kilometre in training, and strict validation fell from 44 % to 0-6 %
+  of circuits completed. The owner wants a bot that corrects itself instead of being restarted.
+* **Options.** (a) Keep the put-back, raise the crash penalty - makes the driver timid everywhere, not
+  only where going off is expensive. (b) End the episode at every off - a restart, and the driver never
+  learns to rejoin. (c) Model what is past the edge: grass or gravel with less grip per wheel and
+  ploughing drag, up to a barrier; the episode ends only at the barrier, facing the wrong way for long,
+  or stuck; the driver rejoins by itself.
+* **Decision.** (c), `EnvConfig.self_recovery` / `train.py --self-recovery`. Surface grip, drag and
+  run-off width are drawn per episode (the driver is not told - it feels them, like a real car); 10 % of
+  episodes start off the road or spun, so rejoining stays in practice once real offs are rare. The
+  observation is unchanged. Strict evaluation (an off ends the run) remains the measure of a clean lap;
+  the race bot is also measured non-strict, with the number of excursions.
+* **Why.** The cost of a mistake is then the time it really costs (plus the existing edge penalty),
+  learned from physics - the owner's principle: race at the limit, overstep it sometimes, no timid
+  safety margins. Replaces the put-back of WP21 for the race bot only; other drivers keep it.
+
+### D-046 — The own map is a remembered preview, not a new input
+
+* **Context.** Race bot stage 3: on later laps the bot should know the circuit beyond its sensors.
+* **Options.** (a) A new input block with the remembered track shape. (b) Feed the remembered stretch
+  into the existing preview inputs (curvature, width, horizon).
+* **Decision.** (b), `EnvConfig.own_map`.
+* **Why.** A remembered stretch is information of exactly the kind the preview carries; every trained
+  driver already uses a long preview, so it works without retraining (measured: Nordschleife lap 2
+  7:56.5 with 120 m sensors, = full preview). (a) would change the observation contract and need
+  training to be useful.
+
+### D-047 — Faster training by replaying each step as a CUDA graph, not by rewriting the simulator
+
+* **Context.** Owner: faster training without worse results. Measured: the step is mostly hundreds of
+  tiny GPU operations whose launch costs as much as their work; several car models multiply it.
+* **Options.** (a) Rewrite the simulator to batch all car models in one environment (started before,
+  stopped). (b) Fuse kernels with torch.compile (needs Triton: not installed, a new Windows
+  dependency). (c) Record the fixed part of a step as a CUDA graph and replay it.
+* **Decision.** (c), on by default in `train.py`.
+* **Why.** Smallest change (no simulator code rewritten), results bit-for-bit identical (tested), and it
+  removes the launch cost per car model too - the reason (a) was wanted. Measured 1.3-1.6x. (b) stays
+  an option for the memory-bound lidar.
+
+### D-048 — Racing is learned by self-play in groups, with physical contact and fault on the car behind
+
+* **Context.** Race bot stage 4: see other cars, avoid contact, overtake.
+* **Decision.** Groups of 4 identical drivers per circuit (car variation makes some faster); restarts
+  near a group mate; contact as rigid-body impulses between three circles per car; penalty per closing
+  speed, doubled for the car behind; no overtaking reward; the opponents block shows the 3 nearest cars
+  within the sensor range ahead and 30 m behind.
+* **Why.** Self-play needs no hand-written opponent and stays "the same machinery". A physical contact
+  makes hitting cost what it costs (speed, direction, spins) - the at-the-limit principle; the penalty
+  only settles fault, as racing rules do (rear-ending). An overtaking bonus would reward risk for its
+  own sake; progress already rewards getting past a slower car.
+
+### D-049 — In the game the bot drives a silenced AI car through its own app
+
+* **Context.** Race bot stage 5: the owner (car 0) against the bot (car 1), same car, the game's physics.
+  CSP combines an AI car's own gas/brake with ours by taking the larger one.
+* **Decision.** A separate app, MV Race Bot: silence the AI (`physics.setAINoInput`, fallback
+  `setAIThrottleLimit(0)`), override the controls, report whether the pedals really follow
+  (`control_ok`), stop otherwise. Inputs are built by the training environment itself.
+* **Why.** Driving the AI slot keeps the game's own physics for both cars (equal machinery by
+  construction). A separate app leaves the tested MV Bridge untouched. Reporting `control_ok` turns the
+  one thing that cannot be tested here into a check the game makes itself.

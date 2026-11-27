@@ -175,13 +175,17 @@ def _dump_ini(sections) -> str:
 
 
 def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
-                   ghost_car: bool = False, ghost_skin: str = "", ideal: bool = True) -> str:
+                   ghost_car: bool = False, ghost_skin: str = "", ideal: bool = True, race_laps: int = 0,
+                   ghost_name: str = "Ghost (ideal lap)") -> str:
     """New race.ini text: the owner's file with car, circuit, session and cars replaced.
 
     ``ideal`` (default, WP49): conditions for a demo that loops for hours - full and constant track
     grip (no rubbering-in, no randomness), 22 C air / 30 C road, no wind. The owner's own assist
     settings (damage, wear, fuel use) live in assists.ini and are left alone; the MV Viewer app keeps
     the demo car fresh instead (tyre wear, tyre temperature, fuel, damage).
+
+    ``race_laps`` > 0 (race bot, WP65): a Race session of that many laps with a standing start from the
+    grid instead of an open Practice; car 1 (``ghost_car``) is the opponent the race bot drives.
     """
     secs = _parse_ini(old_text)
     order = [n for n, _ in secs]
@@ -206,7 +210,12 @@ def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
     for n in [n for n in order if re.fullmatch(r"SESSION_\d+", n) and n != "SESSION_0"]:
         order.remove(n)
         d.pop(n)
-    d["SESSION_0"] = {"NAME": "Practice", "TYPE": "1", "DURATION_MINUTES": "0", "SPAWN_SET": "PIT"}
+    if race_laps > 0:
+        d["SESSION_0"] = {"NAME": "Race", "TYPE": "3", "LAPS": str(int(race_laps)), "DURATION_MINUTES": "0",
+                          "SPAWN_SET": "START"}
+        put("RACE", RACE_LAPS=int(race_laps))
+    else:
+        d["SESSION_0"] = {"NAME": "Practice", "TYPE": "1", "DURATION_MINUTES": "0", "SPAWN_SET": "PIT"}
     if "SESSION_0" not in order:
         order.append("SESSION_0")
     me = d.get("CAR_0", {})
@@ -216,7 +225,7 @@ def build_race_ini(old_text: str, car: str, skin: str, track: str, layout: str,
         order.remove(n)
         d.pop(n)
     if ghost_car:
-        put("CAR_1", MODEL=car, MODEL_CONFIG="", SKIN=ghost_skin or skin, DRIVER_NAME="Ghost (ideal lap)",
+        put("CAR_1", MODEL=car, MODEL_CONFIG="", SKIN=ghost_skin or skin, DRIVER_NAME=ghost_name,
             NATIONALITY="", NATION_CODE="", SETUP="", AI_LEVEL=100, AI_AGGRESSION=0, BALLAST=0, RESTRICTOR=0)
     return _dump_ini([(n, list(d[n].items())) for n in order])
 

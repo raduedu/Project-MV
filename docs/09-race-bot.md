@@ -21,18 +21,18 @@ The race bot instead:
   (`tracks/sets.yaml`). Note: `multi_v7_racing` (started before this rule) did train on them, so the race
   bot descends from `multi_v5_zigzag`, which never saw any real circuit in training;
 * **learns lap by lap** - the lap memory (WP21) remembers, per 5 m of track, what happened there on the
-  previous lap (minimum speed, how close to the limit, offs). Next step: remember the track *shape* it has
-  already driven, so on lap 2 it can "see" beyond its sensors where it has been before (its own map).
+  previous lap (minimum speed, how close to the limit, offs). Plus the own map (stage 3): the track *shape* it has
+  already driven is shown as preview, so on lap 2 it "sees" beyond its sensors where it has been before.
 
 ## Stages
 
 | Stage | What | Status |
 |---|---|---|
-| 1. Explorer | sensor range 50-200 m, memory + lap memory, real circuits except the held-out ones | training `race_v1_sensor` (8 h) |
-| 2. Self-recovery | leaving the road no longer ends the episode or teleports the car: grass/gravel with less grip, the driver must rejoin by itself; only stuck/backwards for long ends it | to build |
-| 3. Own map | remembers the shape of track already driven (beyond the sensor range) | to build |
-| 4. Racing others | several cars per circuit in the simulator (self-play: copies of the driver), opponents within sensor range as inputs, simple contact physics, reward for places gained, penalty for contact; learns to defend and overtake | to build - the biggest part |
-| 5. Live in the game | the bot drives the second car of an offline session through the MV Bridge app (`ac.overrideCarControls(1)` - CSP allows it for AI cars), sees only its sensor range of the imported circuit and the owner's car; the owner drives car 0 in the same car model | to build |
+| 1. Explorer | sensor range 50-200 m, memory + lap memory, real circuits except the held-out ones | `race_v1_sensor` stopped after 1.8 h: the put-back rule made it go off ~1/km and it got worse (9/11 -> 3/11 circuits); continued as `race_v2_recover` (WP61) |
+| 2. Self-recovery | leaving the road no longer ends the episode or teleports the car: grass/gravel with less grip per wheel and ploughing drag, a barrier 2-20 m past the edge, the driver must rejoin by itself; only the barrier, backwards for 8 s or stuck for 10 s end it; 10 % of episodes start off the road or spun (`train.py --self-recovery`, WP61, D-045) | built; training |
+| 3. Own map | remembers the shape of track already driven (beyond the sensor range), shown as preview - no new inputs (`--own-map`, WP62, D-046) | done: lap 2 at 120 m = full-preview pace without retraining (Nordschleife 7:56.5) |
+| 4. Racing others | several cars per circuit in the simulator (self-play: copies of the driver), opponents within sensor range as inputs, simple contact physics, penalty for contact (doubled for the car behind), no bonus for places - being stuck behind already costs progress | built (`--race 4`, WP64, D-048): groups of 4, contact physics, opponents block; training `race_v3_racing`; measure with `scripts/race_eval.py` |
+| 5. Live in the game | the bot drives the second car of an offline session through its own app, MV Race Bot (AI silenced with `physics.setAINoInput`, then `ac.overrideCarControls(1)`), sees only its sensor range of the imported circuit and the owner's car; the owner drives car 0 in the same car model | built (app MV Race Bot, `scripts/race_bot.py`, WP65, D-049); tested against a stand-in game, not yet in the game |
 
 ## Measured so far (2026-11-27)
 
@@ -40,3 +40,22 @@ The race bot instead:
 full preview **7:58.4**, then 7:56.0 and 7:56.5 (3 clean laps); sensors 120 m **8:35.3**, then 8:32.7 and 8:33.5 - no lap-by-lap learning yet; 60 m **9:19.7** (for scale: the real 991 GT3 RS did
 about 7:20). Validation circuits with a 125 m view before any sensor training: 55 % completed
 (full view: ~100 %).
+
+## Measured on 2026-11-28 (WP61-WP65)
+
+* Own map, base driver, 120 m sensors, no retraining - lap 1 / lap 2: Nordschleife 8:35.1 / **7:56.5**
+  (full preview 7:56.0), Spa 2:53.5 / 2:43.6, Monza 2:11.9 / 2:02.5.
+* Race in our simulator, base driver (cannot see cars), starting last behind 3 slower copies: Spa P1 but
+  22 contact steps, Monza a pile-up (all out), Brands Hatch P1 by pushing through. This is what stage 4
+  has to fix.
+* Training speed with CUDA graphs: 60k decisions/s for the race bot (45k before), results identical.
+
+## How to race it (owner)
+
+1. Once: `powershell -ExecutionPolicy Bypass -File mv\ac\plugin\install_plugin.ps1`; in the game enable
+   the *MV Race Bot* app.
+2. `python scripts\race_bot.py --policy runs\race_v3_racing\best.pt --track ks_nordschleife__nordschleife
+   --vehicle ks_porsche_911_gt3_rs --start-game --laps 3 --dry-run` - first a dry run: the game's AI drives
+   car 1 and the bot only prints what it would do (positions, speed, its steering/pedal).
+3. The same without `--dry-run`: the bot waits on the grid, then races. The app window must say "pedals
+   follow the bot: true"; if the game will not hand them over, the bot stops and says so.

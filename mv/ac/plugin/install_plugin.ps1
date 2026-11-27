@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Copies the "MV Bridge" and "MV Viewer" CSP Lua apps into the Assetto Corsa install.
+  Copies the "MV Bridge", "MV Viewer" and "MV Race Bot" CSP Lua apps into the Assetto Corsa install.
 
 .DESCRIPTION
   Run this yourself (Project MV tooling never writes into the game folder):
@@ -11,6 +11,7 @@
 
   It copies  mv\ac\plugin\apps\lua\mv_bridge\*  to  <AcRoot>\apps\lua\mv_bridge\
   and        mv\ac\plugin\apps\lua\mv_viewer\*  to  <AcRoot>\apps\lua\mv_viewer\
+  and        mv\ac\plugin\apps\lua\mv_racebot\* to  <AcRoot>\apps\lua\mv_racebot\
   (overwriting older copies of the same files) and nothing else.
 #>
 param(
@@ -19,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$apps = @("mv_bridge", "mv_viewer")
+$apps = @("mv_bridge", "mv_viewer", "mv_racebot")
 
 if (-not (Test-Path (Join-Path $AcRoot "acs.exe"))) {
     throw "acs.exe not found in '$AcRoot' - pass -AcRoot with your assettocorsa folder."

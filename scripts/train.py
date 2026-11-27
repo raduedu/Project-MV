@@ -93,8 +93,10 @@ def save_record_laps(res, tracks, vp, run_name: str, it: int, best: dict) -> Non
     be replayed in the web interface.
     """
     from mv.laps import best_lap_time, laps_from_result, save_lap
+    if run_name.startswith("_"):              # throw-away test runs (e.g. _smoke_...) never write records
+        return
     for r, t in zip(res, tracks):
-        if not r.finished or t.name.startswith("val_random"):
+        if not r.finished or t.name.startswith("val_random") or r.excursions:   # records are clean laps only
             continue
         key = (vp.name, t.name)
         if key not in best:
@@ -180,6 +182,18 @@ def main() -> None:
     ap.add_argument("--limit-seeking", action="store_true",
                     help="going off costs time (car is put back on) instead of ending the episode, the driver "
                          "remembers last lap per track section, and episodes span several laps (log WP21)")
+    ap.add_argument("--self-recovery", action="store_true",
+                    help="race bot stage 2 (log WP61): past the edge is grass/gravel (less grip, ploughing drag) up "
+                         "to a barrier; going off is NOT the end and the car is NOT put back - the driver must rejoin "
+                         "by itself. Includes lap memory and 240 s episodes; replaces the put-back of --limit-seeking. "
+                         "Validation then lets the car rejoin too and reports how often it left the road")
+    ap.add_argument("--own-map", action="store_true",
+                    help="race bot stage 3 (log WP62): the car remembers the track its sensors have seen; on later "
+                         "laps the preview shows that remembered shape beyond the sensor range (no new inputs)")
+    ap.add_argument("--race", type=int, default=0, metavar="N",
+                    help="race bot stage 4 (log WP64): cars race in groups of N on the same circuit (self-play), "
+                         "touch each other, and the driver sees the 3 nearest cars within its sensor range "
+                         "(adds an input block: start from a driver without it via --init-from)")
     ap.add_argument("--episode-s", type=float, default=None, help="episode length in seconds (default 60; 240 with --limit-seeking)")
     ap.add_argument("--grip-range", type=float, nargs=2, default=None, metavar=("LOW", "HIGH"),
                     help="tyre grip multiplier range for training cars (default 0.88 1.05)")
@@ -292,6 +306,16 @@ def main() -> None:
         env_cfg.recover_on_crash = True
         env_cfg.lap_memory = True
         env_cfg.max_episode_s = 240.0
+    if args.self_recovery:
+        env_cfg.self_recovery = True
+        env_cfg.recover_on_crash = False          # no put-back: rejoining is the driver's job now
+        env_cfg.lap_memory = True
+        env_cfg.max_episode_s = 240.0
+    if args.own_map:
+        env_cfg.own_map = True
+    if args.race > 1:
+        env_cfg.race_group = args.race
+        env_cfg.opponents = 3
     if args.episode_s:
         env_cfg.max_episode_s = args.episode_s
     print(f"generating {args.tracks} training circuits ({args.preset}) ...", flush=True)
@@ -314,6 +338,7 @@ def main() -> None:
     else:
         env = MultiCarEnv(vps, batch, args.envs, env_cfg, device=args.device, seed=args.seed)
         args.envs = env.n
+    env.use_cuda_graph()                      # GPU: replay each step as one recorded graph (same results; WP63)
     ppo = PPO(env, ppo_cfg)
     val = validation_tracks(args.val_preset or args.preset.split("+")[0], args.val_tracks, args.track_margin)
     best_score, it0 = -1e9, 0
@@ -426,7 +451,9 @@ def main() -> None:
                 n_evals += 1
                 if len(vps) > 1:
                     print(f"  validating with {val_vp.name}", flush=True)
-                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg, record=True, blind=val_view)
+                # self-recovery runs are validated the way they race: going off is allowed, rejoining is the job
+                res = evaluate(ppo.net, val_vp, val, "cpu", laps=2, cfg=env_cfg, record=True, blind=val_view,
+                               strict=not args.self_recovery)
                 save_record_laps(res, val, val_vp, name, it, record_laps)
                 val_finished = sum(r.finished for r in res) / len(res)
                 # score: average speed over the distance covered, zero credit beyond 2 laps
@@ -434,7 +461,8 @@ def main() -> None:
                 lines = []
                 for r in res:
                     lap = f"{r.flying_lap:7.2f} s" if r.finished else f"-- ({r.end_reason} at {r.distance_m:.0f} m)"
-                    lines.append(f"    {r.track:<22} flying lap {lap}")
+                    exc = f"  ({r.excursions} off-road excursion{'s' * (r.excursions != 1)})" if r.excursions else ""
+                    lines.append(f"    {r.track:<22} flying lap {lap}{exc}")
                     if tb and r.finished:
                         tb.add_scalar(f"lap/{r.track}", r.flying_lap, ppo.total_steps)
                 print(f"  validation: {val_finished * 100:.0f} % of tracks completed\n" + "\n".join(lines), flush=True)
@@ -445,7 +473,8 @@ def main() -> None:
                 ppo.save(run / f"eval_{it:05d}.pt", {"iteration": it, "score": score, "vehicle": args.vehicle})
                 if holdout_vps:                  # a car file the driver never trained on
                     hv = holdout_vps[(n_evals - 1) % len(holdout_vps)]
-                    hres = evaluate(ppo.net, hv, val, "cpu", laps=2, cfg=env_cfg, blind=val_view)
+                    hres = evaluate(ppo.net, hv, val, "cpu", laps=2, cfg=env_cfg, blind=val_view,
+                                    strict=not args.self_recovery)
                     hdone = sum(r.finished for r in hres)
                     print(f"  held-out car {hv.name}: {hdone}/{len(hres)} completed  " +
                           " ".join(f"{r.track}:{r.flying_lap:.2f}" for r in hres if r.finished and not r.track.startswith("val_")),

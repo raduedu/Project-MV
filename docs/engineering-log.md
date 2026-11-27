@@ -2217,7 +2217,7 @@ double lock = half the fraction). Both Lua files parse; 181 tests pass. **Not se
 Where a learned driver itself slides or crashes, the game shows that too - that is the driver, not the
 viewer.
 
-## WP60 — The race bot, stage 1: sensor range only, learning a track from nothing 🕓 (training)
+## WP60 — The race bot, stage 1: sensor range only, learning a track from nothing ✅ (race_v1 stopped: got worse, see WP61)
 
 **Owner (2026-11-27).** A driver to race against in the game, in the same car, on any track; corrects
 itself instead of being restarted; learns to overtake; able to learn a track from nothing - the
@@ -2248,3 +2248,198 @@ variation, memory (8 samples) + lap memory (limit-seeking, 240 s episodes = seve
 the game (bot = car 1 via `ac.overrideCarControls(1)`).
 
 **Baseline over 3 laps (time limit fixed).** Clean on every lap. Full preview: 7:58.40 / 7:55.97 / 7:56.47; 120 m sensors: 8:35.25 / 8:32.68 / 8:33.49. No improvement from lap to lap - this driver has no lap memory; learning the circuit lap by lap is exactly what the race bot must add.
+
+## WP61 — Race bot stage 2: going off is grass and gravel, and the driver rejoins by itself ✅ (built; training)
+
+**Objective.** Owner: a bot that "autocorrects rather than restarts". Leaving the road must neither end
+the episode nor teleport the car back.
+
+**Finding that triggered it (measured).** `race_v1_sensor` (WP60) got *worse* than where it started.
+Strict, 120 m sensors, 10 validation circuits + Nordschleife, 911 GT3 RS:
+
+| Driver | Completed | Notes |
+|---|---|---|
+| `multi_v5_zigzag/best` (start point) | 9/11 | Nordschleife 8:35.3 / 8:32.7 |
+| `race_v1_sensor` after 1.8 h | 3/11 | validation 44 % -> 0-6 % from update 90 on |
+
+Root cause: the limit-seeking put-back (WP21) made going off cheap - in training it went faster
+(126 -> 155 km/h) and accepted about one off per km. With short sensors it misses braking points.
+Stopped at update ~520 (FINISHED file says why); checkpoints kept.
+
+**Approach (D-045).** `EnvConfig.self_recovery` / `train.py --self-recovery`:
+* Each wheel past the edge is on grass/gravel: tyre grip x 0.35-0.70 and a ploughing force of
+  0.02-0.30 x wheel load. Ploughing acts against the direction of motion, not through the tyres.
+  Both values are drawn per episode and not told to the driver.
+* A barrier stands 2-20 m past the edge (per episode). The episode ends only at the barrier,
+  after 8 s facing the wrong way, or after 10 s stuck.
+* 10 % of episodes start off the road or spun (up to fully backwards, up to 60 % of the speed
+  possible there), so rejoining stays in practice.
+* The observation is unchanged.
+* Validation of such runs is non-strict and counts *excursions* (3+ wheels off). Records are
+  saved for clean laps only.
+
+**Verification.**
+* Tests (`tests/test_self_recovery.py`): wheel classification from position and angle; coasting at
+  30 m/s with 0.2 ploughing loses 1.8-2.8 m/s more in 1 s (0.2 g = 1.96 m/s² plus downforce load);
+  braking on half grip decelerates 0.4-0.65 x as hard; grass is not the end but the barrier is;
+  a spun car ends after exactly the wrong-way time; practice starts are off the road; the default
+  mode is unchanged.
+* Today's drivers with self-recovery (not trained for it):
+  * `multi_v5_zigzag`: 9/11 as before, 2 excursions - Red Bull Ring into the barrier, Monza spun
+    and could not turn round.
+  * `race_v1_sensor`: 3/11, 9 excursions, every one ending in the barrier 10-20 m after leaving the
+    road (straight on at a corner).
+* Smoke run of the full command: validation at 125 m with the own map, 9/16 completed.
+
+**Problems.** `evaluate()` read the excursion count from the environment after the run - an ended
+car is reset and counts from 0; now counted in the loop. A smoke run saved "record laps" to the
+shared lap store; removed, and runs whose name starts with `_` never save records now.
+
+**Running.** `race_v2_recover` (lane 2, 6 h, started 01:01): race_v1's setup with
+`--self-recovery --own-map` instead of `--limit-seeking`, from `multi_v5_zigzag/best`.
+
+## WP62 — Race bot stage 3: own map ✅
+
+**Objective.** On lap 2 the bot should know the track it has already driven, beyond its sensors.
+
+**Approach (D-046).** `EnvConfig.own_map` / `--own-map`: the car keeps `map_reach`, how far from the
+episode start its sensors have seen. Preview stretches inside it show the remembered curvature and
+width, and the horizon input grows to match; once a whole lap is seen, the preview is complete.
+No new inputs - a remembered stretch looks exactly like a long preview - so drivers that were
+trained with full preview can use it unchanged. Lidar stays sensor-limited.
+
+**Verification.** Test: 50 m sensors -> preview to 50 m; map reach +200 m -> preview to 190 m
+(last whole stretch); not yet a whole lap -> sensors only; a whole lap -> full preview, horizon 1.
+Base driver `multi_v5_zigzag/best`, 120 m sensors, NO retraining:
+
+| Circuit | Lap 1 (sensors) | Lap 2 no map | Lap 2 own map | Full preview |
+|---|---|---|---|---|
+| Nordschleife | 8:35.1 | 8:32.7 | **7:56.5** | 7:56.0 |
+| Spa | 2:53.5 | 2:49.9 | **2:43.6** | |
+| Monza | 2:11.9 | off in lap 2 | **2:02.5** | |
+| Brands Hatch GP | 1:44.7 | 1:41.2 | **1:39.1** | |
+| Mugello | 2:16.7 | 2:12.6 | **2:08.6** | |
+| Laguna Seca | 1:43.2 | 1:39.6 | **1:37.9** | |
+
+From lap 2 on, the bot is as fast as with a map of the whole circuit; lap 1 is the real
+"from nothing" test.
+
+**Problem.** The first version also wrapped remembered stretches around the start line. Measuring
+showed it can never matter: the map is one unbroken stretch from the start, so it reaches past the
+line only once a whole lap is seen. The clause was removed, and a test that had passed for the wrong
+reason was fixed.
+
+## WP63 — Training speed: each simulation step replayed as a CUDA graph ✅
+
+**Objective (owner).** Faster training without worse results; measure before cutting.
+
+**Measured (15 360 cars, history + lap memory + self-recovery, GPU shared with 2 trainings).**
+* One step took 89 ms: physics 29 ms (5 sub-steps), observation 28.5 ms (lidar alone 14 ms).
+  Locating, memory and the rest were small. The network and the PPO update were 15-30 % of an update.
+* One car model: 91k decisions/s. Three car models (the race bot): 57k/s, because each model is its
+  own environment and pays the launch cost again.
+* The physics is a few hundred tiny GPU operations. The GPU waits for Python to launch each one.
+
+**Approach (D-047).**
+* `mv/envs/cuda_graph.py` records the fixed part of a step (`RacingEnv._step_core`: physics,
+  contact, reward, end flags, observation) once and replays it with one call.
+* State tensors that the code *replaces* are copied back into their original memory automatically,
+  so the existing code did not need rewriting. The rest of the step (put-backs, restarts) runs
+  normally.
+* Removed a hidden CPU wait in `_car_state` (`int()` of a GPU tensor, twice per step).
+* `train.py` switches it on; evaluation on the CPU is unaffected.
+
+**Verification.**
+* `tests/test_cuda_graph.py`: the graphed and normal steps give **bit-for-bit identical** observations,
+  rewards and end flags over 150 steps with hundreds of restarts. It covers self-recovery + own map,
+  limit-seeking put-backs, racing with contacts, and two car models.
+* Benchmark, three car models, same shared GPU, back to back: 33.6k -> 53.1k decisions/s (1.6x).
+* In production: `race_v2_recover` 60k/s vs `race_v1_sensor` 45k/s (same lanes, same sharing), while
+  also doing self-recovery and the own map.
+
+**Not done, on purpose.**
+* Lidar is memory-bound (32 million ray-segment tests per step). A fused kernel needs Triton (not
+  installed; a new dependency on Windows), and half precision would change the inputs. Revisit
+  if lidar becomes the bottleneck.
+* The batched multi-car simulator rewrite (killed earlier) is no longer needed for the race bot:
+  graphs remove the per-model launch cost that made several models slow.
+
+## WP64 — Race bot stage 4: racing others ✅ (built; training)
+
+**Objective.** The bot races other cars: sees them, does not hit them, overtakes.
+
+**Approach (D-048).**
+* `EnvConfig.race_group` / `train.py --race 4`: cars race in groups of 4 on the same circuit. Every
+  car is the same driver (self-play).
+* The first car of a group picks the next circuit when it restarts; the others follow at their own
+  restart. 70 % of restarts are placed 8-60 m ahead of or behind a group mate at about its speed.
+* Car variation makes some cars faster, so they have to get past.
+* Contact: each body is three circles along its length. Overlapping cars are pushed apart and get an
+  impulse with restitution 0.3 at the contact point, so a hit costs speed, direction or a spin.
+* Penalty 1 per 10 m/s of closing speed, doubled for the car behind. No reward for overtaking:
+  being stuck behind already costs progress.
+* New input block `opponents`: the 3 nearest cars within the sensor range ahead and 30 m behind.
+  Per car: seen, gap along the track, lateral offset, speed difference, relative angle.
+  `--init-from` grows the input with zero weights.
+
+**Verification.**
+* `tests/test_racing.py`: in a rear-end between equal cars, momentum is kept, they separate at
+  0.3 x 20 m/s, they no longer overlap, and only the car behind is at fault. Cars 5 m apart do not
+  touch. A car 50 m ahead appears at +1.0; a car 50 m behind is hidden (beyond 30 m), as is any car
+  beyond the sensor range. Restarts land within 62 m of a group mate. `race_group=1` changes not one
+  number of the old environment.
+* With random actions: 76 contact car-steps in 14 400, and a third of the car-steps see an opponent,
+  so the graph-equality test really covers contacts.
+* `scripts/race_eval.py`: the test car starts last behind 3 copies with 95 % power (3 laps, 120 m
+  sensors). Baseline `multi_v5_zigzag` (cannot see other cars):
+
+| Circuit | Test car | Contact steps (test car / rivals) | Result |
+|---|---|---|---|
+| Spa | P1, 8:33.6 | 22 / 33, 10, 23 | one rival DNF |
+| Monza | DNF | 188 / 190, 1, 3 | pile-up, all four out |
+| Brands Hatch GP | P1, 5:07.9 | 65 / 16, 111, 66 | wins by pushing through |
+
+**Running.** `race_v3_racing` (lane 1 after `multi_v7_racing`, 6 h): race_v2's setup plus `--race 4` -
+race_v2 is the control without opponents.
+
+## WP65 — Race bot stage 5: racing the owner live in the game ✅ (built; not verified in the game)
+
+**Objective.** The owner drives car 0; the bot drives car 1, the same car model, through the game's
+own physics.
+
+**Approach (D-049).**
+* New CSP app **MV Race Bot** (`mv/ac/plugin/apps/lua/mv_racebot`), separate from MV Bridge so the
+  tested car-0 bridge stays untouched.
+* For AI cars the game takes the *larger* of the AI's and our gas/brake (CSP SDK). So the app first
+  silences the AI with `physics.setAINoInput` (fallback `setAIThrottleLimit(0)`), then applies our
+  steering and pedals through `ac.overrideCarControls(1)`. The game's automatic gearbox shifts.
+* It publishes the bot car's state, up to 8 other cars, the session start, and `control_ok`: whether
+  the car's pedals really equal ours. Python stops if not, after trying the fallback once.
+* Fail-safe: no command for 0.5 s -> brake; for 10 s -> car back to the AI.
+* `mv/ac/racebot.py`: the bot's inputs are built by the training environment itself - car 0 is the
+  bot, the other slots are the session's other cars, unused slots park on a dummy circuit.
+  Accelerations come from the change of body velocity (no dependence on the game's g-meter signs).
+* `scripts/race_bot.py`: `--start-game` (owner) writes a 2-car race with a standing start, both in the
+  same car, and starts the game; `--dry-run` sends nothing.
+
+**Verification (no game).** `tests/test_racebot.py`:
+* The Lua and Python layouts are identical.
+* Game axes -> project axes are right: yaw, body velocity, yaw rate, other cars.
+* Steering goes out with the game's sign.
+* The bot's observation from game data equals the training environment's for the same situation:
+  position, preview, lidar, horizon, car, opponents.
+* The race session is written correctly.
+* Closed loop: the real `race()` loop drives a stand-in game car (our physics behind the app's
+  protocol) round a circle for 40 s without leaving the road. Mutation check: a wrong heading axis or
+  a wrong steering sign makes that test fail.
+
+**Not verified - needs the owner in the game.**
+* Whether `setAINoInput` hands the pedals over completely (`control_ok`; the app window shows "pedals
+  follow the bot").
+* Whether the automatic gearbox works on a silenced AI car.
+* That `physics.allowed()` is true in a race session (it was in Practice for the viewer).
+
+First try: `--dry-run` (the AI drives, the bot prints what it would do).
+
+**Next.** Evaluate `race_v2_recover` (Nordschleife at 120 m, laps 1-3, non-strict + strict) and
+`race_v3_racing` (`race_eval.py` against the baseline above); the owner's first in-game test.

@@ -130,6 +130,12 @@ SLAM.
 | lidar | 19 | distance to the track edge along 19 rays over the front 180°, ≤ 150 m | lidar / cone detections / ray-cast on the map |
 | car descriptor | 12 | mass, power-to-weight, grip, downforce, drag, wheelbase, weight distribution, steering lock, driven axle, electric?, width, top speed | the vehicle file |
 | memory (optional) | 15 × N | the car-state block and previous action at N earlier moments (`history_steps`, `history_every`) | the driver's own recent past |
+| lap memory (optional) | 3 × 23 | per preview stretch: last lap's slowest speed, highest grip use (3 = went off), known? (`lap_memory`, WP21) | the driver's own last lap |
+| opponents (optional) | 5 × K | the K nearest other cars within the sensor range ahead / 30 m behind: seen, gap along the track, lateral offset, speed difference, relative angle (`opponents`, race bot WP64) | lidar / radar object tracking; in the game the other cars' positions |
+
+With the **own map** (`own_map`, WP62) the track-preview and horizon blocks also show stretches the
+sensors have already seen beyond their range - no new inputs. Optional blocks are appended at the end,
+so a driver can be grown to use one (`train.py --init-from`: new inputs start with zero weight).
 
 Design rules for this contract:
 
@@ -140,7 +146,9 @@ Design rules for this contract:
   cannot memorise a circuit.
 * **The same code builds it everywhere.** In the game, `ObservationAdapter`
   owns a one-car copy of the training environment and overwrites its state from
-  telemetry; `tests/test_ac_driver.py` proves the result is identical.
+  telemetry; `tests/test_ac_driver.py` proves the result is identical. The race bot's
+  `RaceBotAdapter` does the same with one shadow car per car in the session
+  (`tests/test_racebot.py`).
 
 **Action:** `steer ∈ [-1, 1]` (fraction of full lock, + = left) and
 `pedal ∈ [-1, 1]` (+ throttle, − brake). Gears are automatic (see roadmap for
