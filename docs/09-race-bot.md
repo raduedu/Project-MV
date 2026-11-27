@@ -37,6 +37,6 @@ The race bot instead:
 ## Measured so far (2026-11-27)
 
 `multi_v5_zigzag/best` (911 GT3 RS), Nordschleife, never trained there, standing-start first lap:
-full preview **7:58.4**; sensors 120 m **8:35.3**; 60 m **9:19.7** (for scale: the real 991 GT3 RS did
+full preview **7:58.4**, then 7:56.0 and 7:56.5 (3 clean laps); sensors 120 m **8:35.3**, then 8:32.7 and 8:33.5 - no lap-by-lap learning yet; 60 m **9:19.7** (for scale: the real 991 GT3 RS did
 about 7:20). Validation circuits with a 125 m view before any sensor training: 55 % completed
 (full view: ~100 %).

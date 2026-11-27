@@ -2246,3 +2246,5 @@ variation, memory (8 samples) + lap memory (limit-seeking, 240 s episodes = seve
 
 **Next.** Stage 2 self-recovery (no teleport), stage 3 own map, stage 4 racing others, stage 5 live in
 the game (bot = car 1 via `ac.overrideCarControls(1)`).
+
+**Baseline over 3 laps (time limit fixed).** Clean on every lap. Full preview: 7:58.40 / 7:55.97 / 7:56.47; 120 m sensors: 8:35.25 / 8:32.68 / 8:33.49. No improvement from lap to lap - this driver has no lap memory; learning the circuit lap by lap is exactly what the race bot must add.
