@@ -227,6 +227,24 @@ def _next_job(k: int) -> dict | None:
     return None
 
 
+#: Exit codes Windows gives a process it ends from outside (not a bug in the training):
+#: 0x40010004 DBG_TERMINATE_PROCESS (shutdown, restart, log-off, closed console),
+#: 0xC000013A STATUS_CONTROL_C_EXIT (Ctrl+C / console closed), 0xC0000142 (desktop going away).
+EXTERNAL_EXITS = {0x40010004, 0xC000013A, 0xC0000142}
+
+
+def interrupted(rc: int, new_errors: str) -> bool:
+    """True if a training stopped because it was ended from outside, not because it failed.
+
+    Owner's case (2026-11-26 00:02): the laptop powered off, Windows ended the training with
+    0x40010004, the plan marked the run FAILED, and after the next resume it said "all jobs done" -
+    the GPU stood idle for two days although the run had a save 20 minutes old (log WP58).
+    A real failure leaves a Python traceback in the run's .err file; an outside stop does not.
+    """
+    code = rc & 0xFFFFFFFF
+    return "Traceback (most recent call last)" not in new_errors and (code in EXTERNAL_EXITS or rc < 0)
+
+
 def run_lane(k: int) -> None:
     while True:
         if PAUSE_FLAG.exists():
@@ -246,7 +264,9 @@ def run_lane(k: int) -> None:
         if state == "resumable":
             cmd.append("--resume")
         say(f"lane {k + 1}: {'resume' if state == 'resumable' else 'start'} {name}")
-        with open(RUNS / f"{name}.log", "a") as out, open(RUNS / f"{name}.err", "a") as err:
+        err_file = RUNS / f"{name}.err"
+        err_start = err_file.stat().st_size if err_file.is_file() else 0
+        with open(RUNS / f"{name}.log", "a") as out, open(err_file, "a") as err:
             rc = subprocess.run(cmd, cwd=ROOT, stdout=out, stderr=err).returncode
         if rc == EXIT_PAUSED:
             say(f"lane {k + 1}: {name} paused")
@@ -254,6 +274,13 @@ def run_lane(k: int) -> None:
         if rc != 0:
             if PAUSE_FLAG.exists():           # stopped by "pause"
                 say(f"lane {k + 1}: {name} stopped for pause (exit {rc})")
+                return
+            with open(err_file, "rb") as f:
+                f.seek(err_start)
+                new_errors = f.read().decode("utf-8", "replace")
+            if interrupted(rc, new_errors):           # ended from outside: stays resumable
+                say(f"lane {k + 1}: {name} was ended from outside (exit 0x{rc & 0xFFFFFFFF:08X}, e.g. Windows "
+                    f"shutting down) - it continues from its last save at the next resume")
                 return
             (RUNS / name).mkdir(parents=True, exist_ok=True)
             (RUNS / name / "FAILED").write_text(f"exit code {rc} at {time.ctime()}; see runs/{name}.err\n")

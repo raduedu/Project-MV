@@ -100,3 +100,17 @@ def test_track_margin_moves_both_edges_inwards(track):
     assert np.allclose(n.w_left[wide], track.w_left[wide] - 0.6, atol=0.05)
     assert np.all(n.w_left >= 2.0 - 1e-9) and np.all(n.w_right >= 2.0 - 1e-9)   # never narrower than 4 m
     assert narrowed(track, 0.0) is track
+
+
+def test_plan_tells_an_outside_stop_from_a_failure():
+    """WP58: a run ended by Windows shutting down (exit 0x40010004) stays resumable; a run that
+    crashed with a Python error is a failure."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from train_plan import interrupted
+    assert interrupted(0x40010004, "")                       # shutdown / restart / log-off
+    assert interrupted(0xC000013A, "some warning\n")         # Ctrl+C / console closed
+    assert not interrupted(1, "Traceback (most recent call last):\n  ...\nValueError: x\n")
+    assert not interrupted(0x40010004, "Traceback (most recent call last):\n")   # it did crash first
+    assert not interrupted(1, "")                            # plain error exit: not an outside stop

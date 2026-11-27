@@ -2128,3 +2128,51 @@ uniform 0.6 m 2:31.787). Script `personal/tools/fs_demo_lap.py <track> [base]` (
 launchers updated.
 
 **Addendum (owner, 17:13).** Monza base margin 0.2-0.3 m is fine ("my only complaint was the suspension"): recomputed with **0.3 m** + the same extra room: **2:32.068**; launcher updated.
+
+## WP58 — What went wrong 25-27 Nov: an outside shutdown counted as a failure; results of the finished runs
+
+**Owner (2026-11-27): "look into what's gone wrong".**
+
+**1. Two days of idle GPU.** 2026-11-26 00:02:12 Windows powered the laptop off (System log: event
+1074 by winlogon as SYSTEM, type "power off"; event 577 "system initiated reboot" - the pattern of the
+power button / lid / shutdown action, not a crash; also 27 Nov 00:51 and 14:51). The running
+`multi_v7_racing` was ended with exit code 0x40010004 (DBG_TERMINATE_PROCESS). The plan treated every
+non-zero exit as a failure, wrote FAILED, and after the owner's resume on 26 Nov 07:02 reported "all
+planned jobs are done" - nothing ran since, although the run had a save from 23:43 (20 min old).
+**Fix:** `train_plan.interrupted()`: an exit by an outside stop (0x40010004, 0xC000013A Ctrl+C,
+0xC0000142, negative codes) **without** a Python traceback in that attempt's part of the .err file
+leaves the run resumable and stops the lane (it continues at the next resume); a traceback = FAILED as
+before. Test `test_plan_tells_an_outside_stop_from_a_failure`. The false FAILED marker was removed
+(kept as `interrupted_20261126.txt`); `multi_v7_racing` is resumable at 73 % (8.07/11 h).
+
+**2. `multi_v6_mid2` - medium network with the critic also copied (WP44 fix): still degrades.** Warm
+start: imitation error 0.0011, critic copy error 0.078 (much rougher than the actor's). Validation
+88 % -> 81 % -> **0 %** -> recovered to 44-62 %; ~40 crashes per 100 km (normal-size driver ~15). Copying
+the critic helped (the first try never recovered) but the hypothesis "only the critic" was incomplete.
+Next suspects: the critic copy is still too rough (0.078); the wider network's larger effective steps
+on the value function; entropy/noise reset. Bigger networks stay parked; the normal-size driver remains
+the best (WP40).
+
+**3. `f1_ver_v1` - the F1 driver against Verstappen in the fitted cars (WP43): first results.**
+From zero (the start driver crashed in every F1 car) to 94-100 % of validation circuits, ~222 km/h
+average pace, 5-11 crashes/100 km. Strict laps in each weekend's fitted car vs his 2023/24 pole lap
+(`scripts/f1_benchmark.py --race runs/f1_ver_v1/best.pt`):
+
+| Circuit | His lap | Physics-perfect lap of that car | Our driver | vs him |
+|---|---|---|---|---|
+| Spielberg 2023 | 64.391 | 63.696 | 64.214 | -0.177 s (-0.28 %) |
+| Silverstone 2023 | 86.720 | 83.654 | 86.828 | +0.108 s (+0.12 %) |
+| Monza 2023 | 80.307 | 77.687 | 79.104 | -1.203 s (-1.50 %) |
+| Spa 2023 | 106.168 | 101.624 | 104.877 | -1.291 s (-1.22 %) |
+| Imola 2024 | 74.746 | 71.886 | 75.316 | +0.570 s (+0.76 %) |
+| Zandvoort 2023 (layout differs) | 70.567 | 66.228 | 69.180 | not comparable |
+| Barcelona 2023 (layout differs) | 72.272 | 72.862 | off at 3 738 m | not comparable |
+
+Read with the WP43 caveats: "equal machinery" is a car fitted so that our physics matches his corner,
+straight-end and acceleration speeds (rms 6-10 km/h), on flat circuits without kerbs, DRS, bumps or tyre
+temperature; the comparison carries roughly +-2 %. Within that, after 7 h of training the driver is
+level with his laps (-1.5 % ... +0.8 %), and still 1-4 % off the physics-perfect lap of the same car.
+
+**4. Still open:** the 64-car run trains at ~5 800 decisions/s (8x slower than 3 cars) because every car
+has its own simulator (WP45); batching all cars into one simulator was started and stopped before
+finishing.
