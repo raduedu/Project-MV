@@ -144,6 +144,57 @@ def engine_rpm(speed, gear, vp) -> np.ndarray:
     return np.minimum(rpm, u.rpm_max)
 
 
+def stand_in_steer(steer, vp, body) -> np.ndarray:
+    """Steering for a stand-in body: the same path curvature with ITS wheelbase and steering lock (WP59).
+
+    The recorded steering is a fraction of OUR car's lock. Sent unchanged, a stand-in with another
+    wheelbase and lock points its wheels at a different angle than its path needs, and the force
+    follower drags the tyres sideways (scrub, heat, wear). Low-slip geometry: tan(wheel angle) =
+    wheelbase x curvature, so the curvature our car's wheel angle stands for is kept.
+    """
+    d_ours = np.asarray(steer, float) * np.radians(vp.steering.max_wheel_angle_deg)
+    kappa = np.tan(d_ours) / vp.chassis.wheelbase_m
+    d_body = np.arctan(body.chassis.wheelbase_m * kappa)
+    return np.clip(d_body / np.radians(body.steering.max_wheel_angle_deg), -1.0, 1.0)
+
+
+def keep_off_kerbs_shift(car: dict, track, allow_beyond_m: float = 0.0, smooth_s: float = 1.0) -> float:
+    """Move the playback line sideways (in place) so the car's CENTRE never goes past the track edge
+    (by more than ``allow_beyond_m``); returns the largest shift (m). WP59.
+
+    Our circuits are flat roads whose edges sit at about the white lines; training lets the car's
+    centre run up to 1 m past them before it counts as off (``EnvConfig.off_track_margin_m``) - wheels
+    on the kerbs, as real drivers do. In the game, beyond the kerbs there are raised bumps at some
+    corners; a centre past the edge puts the outer wheels on them and the force follower drives the
+    car straight into them - jumps, flips, broken suspension. Measured on the saved laps: learned laps
+    run their centre past the edge in ~10 % of laps, by 0.25-0.98 m; physics-perfect laps never. So
+    only those stretches are moved, by a smoothed amount (over ``smooth_s`` seconds) so the car does
+    not twitch; wheels on the kerb stay allowed, and lines further in are unchanged. (A first version
+    kept the whole car body 0.2 m inside the edges: it moved 72 % of laps by ~1 m - squeezing their
+    line while keeping their speeds would make the game car corner harder, not easier.)
+    """
+    from scipy.spatial import cKDTree
+    x, y = np.asarray(car["x"], float), np.asarray(car["y"], float)
+    if len(x) < 5:
+        return 0.0
+    tree = cKDTree(track.xy)
+    _, i = tree.query(np.column_stack([x, y]))
+    nrm = track.normal[i]
+    n = (x - track.xy[i, 0]) * nrm[:, 0] + (y - track.xy[i, 1]) * nrm[:, 1]
+    lim_l = np.maximum(track.w_left[i] + allow_beyond_m, 0.5)
+    lim_r = np.maximum(track.w_right[i] + allow_beyond_m, 0.5)
+    shift = np.clip(n, -lim_r, lim_l) - n
+    t = np.asarray(car["t"], float)
+    dt = float(np.median(np.diff(t))) if len(t) > 2 else 0.04
+    k = max(int(round(smooth_s / max(dt, 1e-3) / 2)), 1)
+    w = np.concatenate([np.arange(1, k + 1), np.arange(k, 0, -1)]).astype(float)
+    smooth = np.convolve(np.pad(shift, k, mode="edge"), w / w.sum(), "same")[k:-k]   # triangular average
+    n_new = np.clip(n + smooth, -lim_r, lim_l)              # then never past the limits
+    car["x"] = x + (n_new - n) * nrm[:, 0]
+    car["y"] = y + (n_new - n) * nrm[:, 1]
+    return float(np.max(np.abs(n_new - n)))
+
+
 def _stand_in_body(meta: dict, vp):
     """Car file of the game car standing in for a non-game car, or None (normal case)."""
     try:
@@ -190,7 +241,7 @@ def find_ghost(lap_meta: dict, laps: list[dict]) -> dict | None:
     return max(refs, key=lambda m: m.get("created", "")) if refs else None
 
 
-def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
+def viewer_payload(key: str, ghost_key: str | None = "auto", keep_off_kerbs: bool = True) -> dict:
     """Everything the viewer needs for one lap: car arrays, ghost arrays, label.
 
     ``ghost_key``: "auto" = reference lap of the same car and circuit, None = no ghost.
@@ -229,6 +280,8 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
     if body is not None:
         # The game shows another car's body (vehicles/ac_stand_ins.yaml, WP46): its own gearbox and
         # engine run in the game, so choose gears for THAT gearbox, and push it with ITS mass.
+        if vp is not None:
+            car["steer"] = stand_in_steer(car["steer"], vp, body)
         car["gear"] = stand_in_gears(car["t"], car["speed"], body)
         car["rpm"] = engine_rpm(car["speed"], car["gear"], body)
         label += f" | shown with the {body.name} body"
@@ -244,6 +297,10 @@ def viewer_payload(key: str, ghost_key: str | None = "auto") -> dict:
         if drawn:                               # the viewer hides the stand-in and draws our own model (WP47)
             model = f"mv:{drawn}"
             label = label.replace(f"shown with the {body.name} body", f"MV {drawn} model (moved as {body.name})")
+    if keep_off_kerbs and vp is not None:
+        shift = keep_off_kerbs_shift(car, Track.load(track_file))
+        if shift > 0.05:
+            label += f" | line kept off the kerbs (<= {shift:.2f} m)"
     if ghost:
         label += f" | ghost {ghost['meta']['lap_time']:.3f} s"
     return {"meta": meta, "label": label, "car": car, "model": model,

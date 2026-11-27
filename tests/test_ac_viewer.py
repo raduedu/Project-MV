@@ -385,3 +385,38 @@ def test_only_the_demo_games_watchdog_restores_the_owners_assists(tmp_path, monk
     L.set_assists_owner(123456789)
     L.watch_game(123456789, 0.0, log, poll_s=0.01, max_hours=0.001)  # now it is the owner: restores
     assert "DAMAGE=100" in path.read_text() and not backup.exists() and not marker.exists()
+
+
+def test_playback_keeps_the_car_centre_inside_the_edges_and_stand_ins_steer_for_their_own_geometry():
+    """WP59: a lap that runs its centre past the edge is moved back to the edge (smoothly, only there);
+    a lap inside is untouched; a stand-in steers for the same path with its own wheelbase and lock."""
+    import copy
+    from mv.ac.viewer_link import keep_off_kerbs_shift, stand_in_steer
+    from mv.track.generator import random_tracks
+    from mv.vehicle.params import find_vehicle, load_vehicle
+    tr = random_tracks(1, seed=5, cfg="mixed")[0]
+    m = len(tr.xy)
+    idx = np.arange(0, m, 2)
+    base = {"t": np.arange(len(idx)) * 0.04, "x": tr.xy[idx, 0].copy(), "y": tr.xy[idx, 1].copy()}
+    inside = copy.deepcopy(base)
+    assert keep_off_kerbs_shift(inside, tr) == 0.0 and np.allclose(inside["x"], base["x"])
+    wide = copy.deepcopy(base)
+    k = slice(len(idx) // 3, len(idx) // 3 + 40)                  # a stretch 0.8 m past the left edge
+    off = tr.w_left[idx[k]] + 0.8
+    wide["x"][k] += off * tr.normal[idx[k], 0]
+    wide["y"][k] += off * tr.normal[idx[k], 1]
+    shift = keep_off_kerbs_shift(wide, tr)
+    assert 0.7 < shift < 1.0
+    n = (wide["x"][k] - tr.xy[idx[k], 0]) * tr.normal[idx[k], 0] + (wide["y"][k] - tr.xy[idx[k], 1]) * tr.normal[idx[k], 1]
+    assert np.all(n <= tr.w_left[idx[k]] + 0.02)                   # centre back at or inside the edge
+    far = slice(0, len(idx) // 6)
+    assert np.allclose(wide["x"][far], base["x"][far])              # elsewhere unchanged
+
+    ours = load_vehicle(find_vehicle("fs_generic_ev"))
+    assert np.allclose(stand_in_steer([0.0, 0.3, -0.5], ours, ours), [0.0, 0.3, -0.5], atol=1e-6)
+    body = copy.deepcopy(ours)
+    body.chassis.wheelbase_m *= 2.0                                  # longer car: more wheel angle, same path
+    assert stand_in_steer([0.3], ours, body)[0] > 0.3
+    body = copy.deepcopy(ours)
+    body.steering.max_wheel_angle_deg *= 2.0                         # more lock: smaller fraction of it
+    assert abs(stand_in_steer([0.3], ours, body)[0] - 0.15) < 0.01

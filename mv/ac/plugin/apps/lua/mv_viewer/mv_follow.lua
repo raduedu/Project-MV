@@ -10,7 +10,10 @@
 
     * translation: a spring-damper towards where the car was at this moment of the lap,
           a = kp * (position error) + kd * (velocity error),     force = mass * a
-      applied at the car's reference point, horizontal only (height is the road's business);
+      horizontal only (height is the road's business), applied at ROAD LEVEL under the car
+      (WP59: applied at the centre of gravity, 0.3-0.55 m up, it tipped the car - the tyres resist
+      at the road, so every hard push was also a roll or pitch moment: backflips, crushed
+      suspension; a car's own tyre forces act at the road, and so does this one now);
     * rotation: a pair of opposite sideways forces at the nose and the tail (a couple) that turn
       the car towards the recorded heading, with damping on the turning rate.
 
@@ -74,6 +77,7 @@ local FOLLOW_LAYOUT = {
   yawErrDeg = ac.StructItem.float(),   -- worker -> main: heading error (deg)
   atEnd = ac.StructItem.int32(),       -- worker -> main: the lap is over (main loops or stops)
   steps = ac.StructItem.int32(),       -- worker -> main: heartbeat
+  groundOffset = ac.StructItem.float(), -- main -> worker: height of the car's reference point above the road (m)
 }
 
 local d = ac.readMemoryMappedFile('mv_viewer_v1', DATA_LAYOUT)
@@ -83,6 +87,7 @@ local ARM = 1.2                 -- m: nose and tail points of the turning couple
 local A_MAX = 30.0              -- m/s^2: limit of the pulling acceleration (a crash must not explode)
 local ALPHA_MAX = 10.0          -- rad/s^2: limit of the turning acceleration
 local vZero, vNose, vTail = vec3(0, 0, 0), vec3(0, 0, ARM), vec3(0, 0, -ARM)
+local gCentre, gNose, gTail = vec3(), vec3(), vec3()       -- the same points at road level (car frame)
 local force, f = vec3(), vec3()
 local idx = 0
 local lastSeek = nil
@@ -138,6 +143,8 @@ function script.update(dt)
   -- 911's mass and yaw inertia driven by these equations along the recorded Spa lap follows it to
   -- 0.2 m / 0.1 deg on average; with crude tyres fighting every slide, 1.0 m / 0.1 deg (peaks ~5 m).
   local wp, wy = 4.5 * k, 9.0 * k
+  local h = math.max(0, math.min(1.2, s.groundOffset))      -- road level below the reference point
+  gCentre:set(0, -h, 0); gNose:set(0, -h, ARM); gTail:set(0, -h, -ARM)
   local kp, kd, kpy, kdy = wp * wp, 2 * wp, wy * wy, 2 * wy
 
   -- translation (horizontal)
@@ -147,7 +154,7 @@ function script.update(dt)
   local amag = math.sqrt(ax * ax + az * az)
   if amag > A_MAX then ax, az = ax * A_MAX / amag, az * A_MAX / amag end
   force:set(m * ax, 0, m * az)
-  physics.addForce(0, vZero, true, force, false)
+  physics.addForce(0, gCentre, true, force, false)
   s.posErr = math.sqrt(ex * ex + ez * ez)
 
   -- rotation: couple at nose/tail, towards the recorded heading
@@ -178,7 +185,7 @@ function script.update(dt)
   if nmag > nmax then nx, nz = nx * nmax / nmag, nz * nmax / nmag end
   local c = iz / (2 * ARM * ARM)                             -- force per (m/s^2) of nose acceleration
   f:set(c * nx, 0, c * nz)
-  physics.addForce(0, vNose, true, f, false)
+  physics.addForce(0, gNose, true, f, false)
   f:set(-c * nx, 0, -c * nz)
-  physics.addForce(0, vTail, true, f, false)
+  physics.addForce(0, gTail, true, f, false)
 end

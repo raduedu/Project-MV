@@ -93,6 +93,7 @@ local FOLLOW_LAYOUT = {
   yawErrDeg = ac.StructItem.float(),
   atEnd = ac.StructItem.int32(),
   steps = ac.StructItem.int32(),
+  groundOffset = ac.StructItem.float(),
 }
 
 local data = ac.writeMemoryMappedFile('mv_viewer_v1', DATA_LAYOUT)
@@ -655,12 +656,13 @@ local function tick(dt)
       follow.playing = playing and 1 or 0
       follow.speed = speed
       follow.stiffness = stiffness
+      follow.groundOffset = rideHeight                     -- the follower pushes at road level (WP59)
       follow.active = 1
       playT = num(follow.t, 'follower clock')
       if follow.atEnd == 1 then
         if loop then seek(0) else playing = false end
-      elseif follow.posErr > 15 then                       -- crashed / stuck: put it back on the lap
-        seek(playT)
+      elseif follow.posErr > 15 or (car.up and car.up.y < 0.5) then
+        seek(playT)                                        -- crashed, stuck, on its side or roof: back on the lap, upright
       end
       checkPlacement()
     else                                                   -- fallback: place it every frame

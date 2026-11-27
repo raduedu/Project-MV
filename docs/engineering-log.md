@@ -2176,3 +2176,43 @@ level with his laps (-1.5 % ... +0.8 %), and still 1-4 % off the physics-perfect
 **4. Still open:** the 64-car run trains at ~5 800 decisions/s (8x slower than 3 cars) because every car
 has its own simulator (WP45); batching all cars into one simulator was started and stopped before
 finishing.
+
+## WP59 — Laps in the game: no more flips, crushed suspension or scrubbed tyres from our side 🕓 (offline checks; in-game check by the owner)
+
+**Owner (2026-11-27).** "Make sure everything in the Assetto Corsa implementation actually works: physics
+issues, suspension issues, instant tyre wear ... all types of car must work without backflips and wrecking
+their own windows (unless that's something the model does)."
+
+**Faults found in our implementation (not in the drivers).**
+1. *The force follower pushed at the centre of gravity* (`mv_follow.lua`, WP34): up to 3 g of pull,
+   0.3-0.55 m above the road, while the tyres resist at the road - every hard push was also a roll or
+   pitch moment (F x h). Example: 3 g at h = 0.3 m on a 1.5 m track gives a rolling moment 1.2x the car's
+   own righting moment (m g track/2): enough to roll it; hard braking demands pitch it (backflips);
+   in between, the suspension is crushed. **Fix:** all follower forces (pull and the turning couple)
+   act at road level under the car (`groundOffset` = the car's measured height above the road, new
+   field in the shared FOLLOW layout of both scripts) - like extra tyre force, so no moment of its own.
+2. *Stand-ins steered with the wrong geometry:* the recorded steering is a fraction of OUR car's lock;
+   a stand-in with another wheelbase and lock (Tatuus for the FS car, Panamera for the Taycan, SF70H for
+   the fitted F1 cars) pointed its wheels wrongly for its path, and the follower dragged its tyres
+   sideways - heat, wear, flat spots. **Fix:** `stand_in_steer`: same path curvature (tan(wheel angle)
+   = wheelbase x curvature) with the stand-in's wheelbase and lock.
+3. *Kerbs and bumps:* our circuits are flat roads with edges at about the white lines, and training
+   allows the car's centre 1 m past them (wheels on the kerbs). Measured on the saved laps on imported
+   circuits: learned laps run their centre past the edge in ~10 % of laps (90th percentile +0.25 m, max
+   +0.98 m); physics-perfect laps never (>= 0.9 m inside); Verstappen's laps up to 37 m where the game's
+   layout differs. In the game, raised bumps sit beyond some kerbs. **Fix:** `keep_off_kerbs_shift` keeps
+   the playback line's centre at or inside the edge (wheels on the kerb still allowed), smoothed over 1 s,
+   only where needed. First version kept the whole body 0.2 m inside: it moved 72 % of laps by ~1 m -
+   squeezing a line while keeping its speeds would make cornering harder; dropped. Final: 78 % of laps
+   untouched, learned laps moved by <= 0.74 m.
+4. *Safety net:* a car on its side or roof (up-vector y < 0.5) is put back upright on the lap at once,
+   like a car stuck > 15 m away.
+Already in place (WP54-56): no forces while the game's menu holds the car; demo assists (damage off, ABS
+and TC on, no wear) owned by the game they were written for; tyre cool-down.
+
+**Verification.** Game payloads built for all 151 viewable laps (best per car/circuit/kind of 586): no
+errors; tests for the kerb shift (a stretch 0.8 m past the edge is moved back, elsewhere unchanged, a lap
+inside untouched) and the stand-in steering (identity for the same car; longer wheelbase = more angle;
+double lock = half the fraction). Both Lua files parse; 181 tests pass. **Not seen in the game yet.**
+Where a learned driver itself slides or crashes, the game shows that too - that is the driver, not the
+viewer.
