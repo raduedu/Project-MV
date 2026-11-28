@@ -208,6 +208,34 @@ end
 
 local function worldDir(yaw) return vec3(math.cos(yaw), 0, -math.sin(yaw)) end
 
+-- ---- physics guard (engineering log WP70) ----------------------------------------------------------
+-- The physics engine (ODE) stops the whole game ("ODE INTERNAL ERROR 1, !row1_norm_fault") when it is
+-- handed a NaN, an infinite value, a zero-length direction or an absurd speed. Every placement goes
+-- through placeCarSafe; tests/test_ac_viewer.py checks that physics.setCarPosition and
+-- physics.setCarVelocity are called nowhere else. (The lap data is already checked and repaired before
+-- it is sent - mv/ac/playback.py - this is the second, independent line of defence.)
+local function finite(x) return type(x) == 'number' and x == x and x > -1e9 and x < 1e9 end
+local function finiteVec(v) return v ~= nil and finite(v.x) and finite(v.y) and finite(v.z) end
+local V_MAX = 120                      -- m/s: nothing we play is faster
+local function placeCarSafe(pos, dir, vel, recordedSpeed)
+  if not finiteVec(pos) or not finiteVec(dir) then return false end
+  local l = dir:length()
+  if l < 1e-3 then return false end
+  physics.setCarPosition(0, pos, dir * (1 / l))
+  local cap = math.min(V_MAX, (finite(recordedSpeed) and math.abs(recordedSpeed) or 0) * 1.2 + 3)
+  local v = finiteVec(vel) and vel or vec3(0, 0, 0)
+  local vl = v:length()
+  if vl > cap then v = v * (cap / vl) end
+  physics.setCarVelocity(0, v)
+  return true
+end
+
+-- velocity of the recorded path between samples i and i+1 (time step never below 20 ms)
+local function pathVelocity(a, i)
+  local span = math.max(a.t[i + 1] - a.t[i], 0.02)
+  return vec3((a.x[i + 1] - a.x[i]) / span, 0, -(a.y[i + 1] - a.y[i]) / span)
+end
+
 -- Road surface under (x, z): height from the track's own centre line (works from any start height:
 -- Spa climbs ~100 m from the pits), then a short ray down; `normalOut` receives the road's normal.
 local function groundY(x, z, guessY, normalOut)
@@ -305,11 +333,11 @@ local function placeAt(T)
   local s = sample(lap.car, T, { 'x', 'y', 'yaw', 'speed' })
   local dir = worldDir(s.yaw)
   lastGround = groundY(s.x, -s.y, lastGround or car.position.y)
-  physics.setCarPosition(0, vec3(s.x, lastGround + rideHeight + 0.05, -s.y), dir * dirSign)
   local i = locate(lap.car, T)
-  local a = lap.car
-  local span = math.max(a.t[i + 1] - a.t[i], 1e-4)
-  physics.setCarVelocity(0, vec3((a.x[i + 1] - a.x[i]) / span, 0, -(a.y[i + 1] - a.y[i]) / span))
+  if not placeCarSafe(vec3(s.x, lastGround + rideHeight + 0.05, -s.y), dir * dirSign, pathVelocity(lap.car, i), s.speed) then
+    status = 'lap data unusable at this moment - car not moved'
+    return
+  end
   physics.awakeCar(0)
   verify = { dir = dir, frames = 0, wrong = 0, T = T }
 end
@@ -672,15 +700,12 @@ local function tick(dt)
           if loop then playT = 0; ghostIdx = 1 else playT = lap.carTime; playing = false end
         end
       end
-      local s = sample(lap.car, playT, { 'x', 'y', 'yaw' })
+      local s = sample(lap.car, playT, { 'x', 'y', 'yaw', 'speed' })
       local dir = worldDir(s.yaw)
       lastGround = groundY(s.x, -s.y, lastGround or car.position.y)
-      physics.setCarPosition(0, vec3(s.x, lastGround + rideHeight + 0.05, -s.y), dir * dirSign)
       local i = locate(lap.car, playT)
-      local a = lap.car
-      local span = math.max(a.t[i + 1] - a.t[i], 1e-4)
-      physics.setCarVelocity(0, playing and vec3((a.x[i + 1] - a.x[i]) / span, 0, -(a.y[i + 1] - a.y[i]) / span)
-        or vec3(0, 0, 0))
+      placeCarSafe(vec3(s.x, lastGround + rideHeight + 0.05, -s.y), dir * dirSign,
+                   playing and pathVelocity(lap.car, i) or vec3(0, 0, 0), s.speed)
       if car.look:dot(dir) < -0.3 then dirSign = -dirSign end
     end
     local cs, i = sample(lap.car, playT, { 'x', 'y', 'steer', 'thr', 'brk' })

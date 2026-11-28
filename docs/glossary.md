@@ -100,6 +100,8 @@ topic. Where a term has a symbol in the code it is given in `code font`.
 | `fast_lane.ai` | The file in each track folder holding the AI racing line and the distance to both track edges. |
 | Shared memory | A block of memory AC publishes with live telemetry that other programs can read. |
 | Bridge | Our code that reads that telemetry and sends controls back (`mv/ac/bridge`). |
+| ODE | Open Dynamics Engine, the physics library inside Assetto Corsa. "ODE INTERNAL ERROR 1 ... !row1_norm_fault" = it was handed a direction of zero length (a NaN, an absurd speed, a car inside a wall) and stopped the game. |
+| Playback stage | `mv/ac/playback.py`: every lap shown in the game is checked against physical limits first - sent unchanged if safe, repaired if not (e.g. real laps measured at 4 Hz), refused with a reason if it cannot be made safe (WP70). |
 | Shadow environment | A one-car copy of the training environment kept in step with the game so observations are computed by the training code itself. |
 | `ui_car.json` | The description file in each car folder (`ui/`): display name, class "race"/"street", tags such as `#GT3`, and advertised figures ("specs": bhp, weight, top speed, 0-100). The catalogue reads it to sort cars and to check our numbers. |
 | DLC | Downloadable content - paid add-on car packs. Steam creates empty folders for DLC cars that are not owned; the importer reports them as "not installed". |

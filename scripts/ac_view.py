@@ -73,7 +73,14 @@ def main() -> int:
         key = min(cands, key=lambda m: m["lap_time"])["key"]
     if not key:
         ap.error("give a lap key, --best CAR TRACK, --list or a playback command")
-    payload = viewer_payload(key, None if a.no_ghost else "auto", keep_off_kerbs=a.keep_off_kerbs)
+    from mv.ac.playback import PlaybackError
+    try:
+        payload = viewer_payload(key, None if a.no_ghost else "auto", keep_off_kerbs=a.keep_off_kerbs)
+    except PlaybackError as e:                       # not safe for the game's physics, and not repairable (WP70)
+        print(f"not played: {e}")
+        return 1
+    for r in payload.get("repairs", []):
+        print(f"playback repaired: {r}")
     if a.no_launch:
         lap_id = link.load(payload, speed=a.speed, loop=not a.no_loop)
     else:

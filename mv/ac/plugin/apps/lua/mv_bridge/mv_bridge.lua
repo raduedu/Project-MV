@@ -190,14 +190,31 @@ local function trackPoint(spline, lateral)
   return ac.trackCoordinateToWorld(vec3(lateral, 0, spline % 1))
 end
 
+-- ---- physics guard (engineering log WP70) ----------------------------------------------------------
+-- The physics engine (ODE) stops the whole game ("ODE INTERNAL ERROR 1, !row1_norm_fault") when it is
+-- handed a NaN, an infinite value or a zero-length direction. The only placement goes through
+-- placeCarSafe; tests/test_ac_bridge.py checks that the raw physics calls appear nowhere else.
+local function finite(x) return type(x) == 'number' and x == x and x > -1e9 and x < 1e9 end
+local function finiteVec(v) return v ~= nil and finite(v.x) and finite(v.y) and finite(v.z) end
+local function placeCarSafe(pos, dir, speed)
+  if not finiteVec(pos) or not finiteVec(dir) or not finite(speed) then return false end
+  local l = dir:length()
+  if l < 1e-3 then return false end
+  local u = dir * (1 / l)
+  physics.setCarPosition(0, pos, u * teleportDirSign)
+  physics.setCarVelocity(0, u * math.max(0, math.min(120, speed)))
+  return true
+end
+
 local function teleport(b)
   local len = math.max(sim.trackLengthM or 0, 100)
+  if not (finite(b.spline) and finite(b.lateral) and finite(b.speed)) then return false end
   local p0 = trackPoint(b.spline, b.lateral)
   local p1 = trackPoint(b.spline + 2 / len, b.lateral)
-  local dir = (p1 - p0):normalize()
-  physics.setCarPosition(0, p0, dir * teleportDirSign)
-  physics.setCarVelocity(0, dir * b.speed)
-  b.dir, b.pos, b.wait = dir, p0, 5
+  local d = p1 - p0
+  if not placeCarSafe(p0, d, b.speed) then return false end
+  b.dir, b.pos, b.wait = d * (1 / d:length()), p0, 5
+  return true
 end
 
 local function startCommand(c)
@@ -220,7 +237,7 @@ local function startCommand(c)
   elseif k == CMD.TELEPORT_SPLINE then
     if not physics.allowed() then return finish(b.seq, RES.PHYSICS_NOT_ALLOWED) end
     busy = b
-    teleport(b)
+    if not teleport(b) then return finish(b.seq, RES.FAILED) end      -- unusable target: car not moved
   elseif k == CMD.SAVE_STATE then
     busy = b
     ac.saveCarStateAsync(function(err, data)
@@ -252,7 +269,7 @@ local function updateBusy()
   if car.look:dot(b.dir) < 0 and not b.flipped then
     teleportDirSign = -teleportDirSign
     b.flipped = true
-    teleport(b)
+    if not teleport(b) then finish(b.seq, RES.FAILED) end
     return
   end
   finish(b.seq, car.look:dot(b.dir) > 0 and RES.OK or RES.FAILED)

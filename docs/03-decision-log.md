@@ -625,3 +625,15 @@ supersedes it — do not edit history.*
   side-by-side racing stays worth it; 10 s of pushing costs 40-80 m, more than staying behind a slower
   car for a few corners. Not a safety margin on the driving limit - it is the racing rule against
   using another car as a brake or a battering ram, and in the game the other car is the owner's.
+
+### D-051 — Every lap played in the game passes one playback stage; every app guards the physics calls
+
+* **Context.** "ODE INTERNAL ERROR 1" in the game (WP70): laps measured in the real world (OpenF1, ~4 Hz,
+  uneven time stamps, other layouts) made the viewer hand the physics engine 637 m/s and cars inside
+  barriers. Owner: fix it for everything, modular - not per lap.
+* **Decision.** (1) `mv/ac/playback.py`: clean -> check against physical limits -> unchanged if safe ->
+  repaired (mildest first) if not -> refused with a reason. (2) In each Lua app one `*Safe` wrapper per
+  physics call (position, velocity, force), enforced by a test.
+* **Why.** One place decides what is playable, so new data sources (other drivers, other sims, telemetry)
+  need no viewer change; laps that are already safe stay bit-identical (the viewer must stay accurate);
+  the Lua guard is independent of the Python stage, so neither alone has to be perfect.

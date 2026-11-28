@@ -2603,3 +2603,53 @@ judged by the sum of 7 flying laps (828.4 s), apex tyre use (0.67) and share of 
 from `multi_v5_zigzag/best.pt`, plus `--reset-noise 0.15 --min-noise 0.06`, 3 h. Confirmed: noise 0.15 at
 update 1; first validation 16/16 (and 16/16 with the held-out 992 GT3 RS). Runs beside race_v4 (lane 1), so
 both train more slowly until ~18:10.
+
+## WP70 — "ODE INTERNAL ERROR 1" in the game: one playback stage for every lap, guards in every app ✅ (offline; in-game check by the owner)
+
+**Owner (2026-11-28, screenshot):** the game stopped with *ODE INTERNAL ERROR 1, assertion "!row1_norm_fault"
+failed in odemath.cpp:296*, "especially for the Verstappen ones" - "make sure the AC pipeline works for
+everything rather than fixing one thing for every lap ... something modular".
+**Evidence.** Game logs (read only): Imola, `ks_ferrari_sf70h` (the F1 stand-in), crash right after the session
+started; neither log names a cause (WP50/WP54 had already removed two other triggers). Every lap the viewer
+can play (887) was turned into exactly what the game receives and checked: **880 are clean** (25 Hz, path
+speed <= 1.08 x the recorded speed, turning <= 1.8 rad/s, centre <= 0.98 m past the edge); **all 7 Verstappen
+laps are not**: OpenF1 positions at ~4 Hz with uneven time stamps (steps down to 0.007 s) imply up to
+**637 m/s** between samples and 63 rad/s of turning, and three of them were driven on layouts that differ
+from the game's (up to 37 m outside our Barcelona). Root cause: the viewer places the car (start, seek,
+loop, and whenever it strays > 15 m - which a jittery target causes) with velocity = (next position - this
+position) / time step: the game got a car moving at 637 m/s, and with a different layout a car placed inside
+a barrier - both classic ways to give ODE a degenerate contact (the assertion checks a zero-length normal).
+
+**Fix (D-051): two independent layers, for every lap and every app.**
+1. `mv/ac/playback.py` - one stage every lap and ghost passes (`viewer_payload` -> panel and `ac_view.py`):
+   clean (non-finite samples, repeated/backward time stamps) -> check against `Limits` (time step 20-250 ms,
+   path speed <= 1.15 x recorded + 2 m/s and <= 120 m/s, heading rate <= 4 rad/s, centre <= 3 m past the
+   circuit's edge) -> **a lap that passes is sent unchanged** (bit-identical: the viewer stays exact) ->
+   otherwise repaired, mildest first: even 0.04 s steps; the line kept and the car placed along it by its
+   recorded speed - on the circuit (distance along it, never backwards, matched only near the previous point
+   so a different layout cannot make it leap; offset limited to 1 m past the edges; measuring glitches that
+   step backwards dropped; wiggles < 7/15/30 m smoothed) or along the line itself; heading smoothed only
+   where it still turns too fast; time smoothing as the last resort -> **refused with a reason** if still
+   unsafe (`PlaybackError`; the panel shows it, the game never sees the lap). Repairs are reported in the
+   panel message and by `ac_view.py`.
+2. Lua: every value handed to the physics goes through one guard per app - `placeCarSafe` (viewer, bridge:
+   finite position and direction, direction of non-zero length, velocity capped at 1.2 x recorded speed +
+   3 m/s and 120 m/s), `addForceSafe` (follower: finite, capped); the follower also ignores non-finite lap
+   values and never differentiates over less than 20 ms. MV Bridge's reset finishes as FAILED instead of
+   placing a car at an unusable target.
+
+**Verification.** All 887 laps: 880 unchanged, 7 repaired, 0 refused. The repaired Verstappen laps stay
+0.6-0.7 m (median) from his real line, path speed within 1 % of his recorded speed, centre within 1.1 m of the
+edges (Barcelona, RBR, Zandvoort, Silverstone: kept on the game's layout). `tests/test_playback.py` (10): a
+clean lap comes back bit-identical; NaN and repeated stamps dropped; a 4 Hz jittered lap with a 15 m
+backwards glitch repaired to < 1.5 m of its circle; a line 20 m off kept < 1.25 m past the edge; an
+unusable lap refused; saved laps safe and clean ones untouched; and a static check that no Lua app calls
+`physics.setCarPosition / setCarVelocity / addForce` outside a `*Safe` guard. Lua parses (5 files); 215
+tests pass (one unrelated training-precision test, `test_distillation...`, failed once while two trainings
+loaded the GPU and passes alone with and without this change). Control panel server restarted (training
+untouched).
+**Not verified:** in the game. The owner reinstalls the apps (`install_plugin.ps1`) - Claude never writes
+into the game folder.
+**Next steps.** Owner: reinstall the apps, play a Verstappen lap (e.g. Spa, Barcelona) and a few of ours. If
+the error ever returns, the stage and the guards rule out bad lap data - the next suspect would be the
+follower's forces themselves on light, stiff cars (SF70H ~730 kg).

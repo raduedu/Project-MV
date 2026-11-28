@@ -95,6 +95,21 @@ local t = 0
 
 local function wrap(a) return (a + math.pi) % (2 * math.pi) - math.pi end
 
+-- ---- physics guard (engineering log WP70) ----------------------------------------------------------
+-- The physics engine (ODE) stops the whole game ("ODE INTERNAL ERROR 1, !row1_norm_fault") when it is
+-- handed a NaN, an infinite value or a zero-length direction. Every force goes through addForceSafe;
+-- tests/test_ac_viewer.py checks that physics.addForce is called nowhere else.
+local function finite(x) return type(x) == 'number' and x == x and x > -1e9 and x < 1e9 end
+local function finiteVec(v) return v ~= nil and finite(v.x) and finite(v.y) and finite(v.z) end
+local F_MAX = 5000 * 60                -- N: more than any car's mass x the pulling limit
+local function addForceSafe(pos, force)
+  if not finiteVec(pos) or not finiteVec(force) then return false end
+  local l = force:length()
+  if l > F_MAX then local c = F_MAX / l; force:set(force.x * c, force.y * c, force.z * c) end
+  physics.addForce(0, pos, true, force, false)
+  return true
+end
+
 -- recorded state at time tt: position (AC x, z), velocity, heading direction and its rate of change
 local function reference(tt)
   local n = d.n_car
@@ -103,7 +118,7 @@ local function reference(tt)
   while idx < n - 2 and ct[idx + 1] <= tt do idx = idx + 1 end
   local i = idx
   local t0, t1 = ct[i], ct[i + 1]
-  local span = math.max(t1 - t0, 1e-4)
+  local span = math.max(t1 - t0, 0.02)           -- never differentiate over less than 20 ms (WP70)
   local fr = math.max(0, math.min(1, (tt - t0) / span))
   local x0, x1, y0, y1 = d.car_x[i], d.car_x[i + 1], d.car_y[i], d.car_y[i + 1]
   local yaw0 = d.car_yaw[i]
@@ -132,13 +147,16 @@ function script.update(dt)
 
   local px, pz, vx, vz, lx, lz, dlx, dlz = reference(t)
   if holding then vx, vz, dlx, dlz = 0, 0, 0, 0 end
+  if not (finite(px) and finite(pz) and finite(vx) and finite(vz) and finite(lx) and finite(lz)
+          and finite(dlx) and finite(dlz)) then return end           -- bad lap data: no forces at all
 
   local T = physics.getBodyTransform(0)
   local p, L = T.position, T.look
   local v = physics.getPointVelocity(0, vZero, true)
-  local m = math.max(d.mass_kg, 300)
-  local iz = math.max(d.yaw_inertia_kgm2, 200)
-  local k = math.max(0.2, s.stiffness)
+  if not (finiteVec(p) and finiteVec(L) and finiteVec(v)) then return end
+  local m = finite(d.mass_kg) and math.max(d.mass_kg, 300) or 1400
+  local iz = finite(d.yaw_inertia_kgm2) and math.max(d.yaw_inertia_kgm2, 200) or 2200
+  local k = finite(s.stiffness) and math.max(0.2, s.stiffness) or 1
   -- rad/s: natural frequencies (critically damped). Chosen offline (WP34): a rigid body with the
   -- 911's mass and yaw inertia driven by these equations along the recorded Spa lap follows it to
   -- 0.2 m / 0.1 deg on average; with crude tyres fighting every slide, 1.0 m / 0.1 deg (peaks ~5 m).
@@ -154,7 +172,7 @@ function script.update(dt)
   local amag = math.sqrt(ax * ax + az * az)
   if amag > A_MAX then ax, az = ax * A_MAX / amag, az * A_MAX / amag end
   force:set(m * ax, 0, m * az)
-  physics.addForce(0, gCentre, true, force, false)
+  addForceSafe(gCentre, force)
   s.posErr = math.sqrt(ex * ex + ez * ez)
 
   -- rotation: couple at nose/tail, towards the recorded heading
@@ -185,7 +203,8 @@ function script.update(dt)
   if nmag > nmax then nx, nz = nx * nmax / nmag, nz * nmax / nmag end
   local c = iz / (2 * ARM * ARM)                             -- force per (m/s^2) of nose acceleration
   f:set(c * nx, 0, c * nz)
-  physics.addForce(0, gNose, true, f, false)
+  if not finiteVec(f) then return end                      -- the couple is applied as a pair or not at all
+  addForceSafe(gNose, f)
   f:set(-c * nx, 0, -c * nz)
-  physics.addForce(0, gTail, true, f, false)
+  addForceSafe(gTail, f)
 end

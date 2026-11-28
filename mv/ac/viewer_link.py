@@ -41,6 +41,8 @@ from ctypes import c_float, c_int32, c_uint8, c_uint32
 
 import numpy as np
 
+from mv.ac.playback import check_body, prepare_playback
+
 __all__ = ["VIEWER_MAP", "VIEWER_STATE_MAP", "MAX_SAMPLES", "ViewerData", "ViewerState", "ViewerLink",
            "viewer_layout", "lap_arrays", "find_ghost", "viewer_payload", "engine_rpm", "Command"]
 
@@ -266,7 +268,10 @@ def viewer_payload(key: str, ghost_key: str | None = "auto", keep_off_kerbs: boo
         ghost = load_lap(gm["key"]) if gm else None
     elif ghost_key:
         ghost = load_lap(ghost_key)
-    car = lap_arrays(lap)
+    # every lap and ghost passes the playback stage (mv/ac/playback.py, WP70): unchanged if it is safe for
+    # the game's physics, repaired if it is not (e.g. real laps measured at ~4 Hz), refused if it cannot be
+    circuit = Track.load(track_file)
+    car, repairs = prepare_playback(lap_arrays(lap), what=f"lap {key}", track=circuit)
     vp = _vehicle_for(meta)
     if vp is not None and np.any(car["gear"]):
         car["rpm"] = engine_rpm(car["speed"], car["gear"], vp)
@@ -305,13 +310,17 @@ def viewer_payload(key: str, ghost_key: str | None = "auto", keep_off_kerbs: boo
         shift = keep_off_kerbs_shift(car, Track.load(track_file))
         if shift > 0.05:
             label += f" | line kept off the kerbs (<= {shift:.2f} m)"
+    ghost_arrays = None
     if ghost:
+        ghost_arrays, ghost_repairs = prepare_playback(lap_arrays(ghost, _GHOST_FIELDS), what="ghost lap", track=circuit)
+        repairs += [f"ghost: {r}" for r in ghost_repairs]
         label += f" | ghost {ghost['meta']['lap_time']:.3f} s"
-    return {"meta": meta, "label": label, "car": car, "model": model,
-            "mass_kg": float(vp.chassis.mass_kg) if vp else 1400.0,
-            "yaw_inertia_kgm2": float(vp.chassis.yaw_inertia_kgm2) if vp else 2200.0,
-            "ghost": lap_arrays(ghost, _GHOST_FIELDS) if ghost else None,
-            "ghost_meta": ghost["meta"] if ghost else None}
+    if repairs:
+        label += " | playback repaired"            # details in payload["repairs"] (the label has 96 bytes)
+    mass, inertia = check_body(vp.chassis.mass_kg if vp else 1400.0, vp.chassis.yaw_inertia_kgm2 if vp else 2200.0)
+    return {"meta": meta, "label": label, "car": car, "model": model, "repairs": repairs,
+            "mass_kg": mass, "yaw_inertia_kgm2": inertia,
+            "ghost": ghost_arrays, "ghost_meta": ghost["meta"] if ghost else None}
 
 
 def ghost_model_path(meta: dict, ac_root=None) -> str:

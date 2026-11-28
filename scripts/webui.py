@@ -351,9 +351,13 @@ def act(path: str, body: dict) -> dict:
         # (mv/ac/launch.py, log WP33). The shared-memory link stays open for the server's lifetime.
         from mv.ac.launch import open_lap_in_game
         from mv.ac.viewer_link import viewer_payload
+        # every lap passes the playback stage (mv/ac/playback.py, WP70): unsafe laps are repaired or refused
         payload = viewer_payload(body.get("key", ""), body.get("ghost", "auto") or None)
-        return open_lap_in_game(payload, _viewer_link(), ghost_car=bool(body.get("ghost_car")),
-                                restart=bool(body.get("restart")), speed=float(body.get("speed", 1.0)))
+        res = open_lap_in_game(payload, _viewer_link(), ghost_car=bool(body.get("ghost_car")),
+                               restart=bool(body.get("restart")), speed=float(body.get("speed", 1.0)))
+        if payload.get("repairs") and isinstance(res, dict):
+            res["msg"] = f"{res.get('msg', '')} - playback repaired: " + "; ".join(payload["repairs"])
+        return res
     if path == "/api/ac_view_cmd":
         from mv.ac.viewer_link import Command
         cmd = {"play": Command.PLAY, "pause": Command.PAUSE, "restart": Command.RESTART,
