@@ -2512,3 +2512,11 @@ plan and its run folder moved to the recycle bin at the owner's request.
 **Next steps.** Evaluate `race_v4_contact` the same way (laps must not get worse; contacts and places);
 `race_eval.py` over several grids; the owner's first in-game race with `race_v3_racing/latest.pt` (or
 race_v4 when it is better).
+
+## WP67 — Control panel: the lanes come first ✅
+
+**Owner (2026-11-28):** "the first things I see should be the lanes - I usually open it for those".
+**Change.** In `mv/ui/index.html` the lanes now sit above "Fastest laps" in the page itself, so desktop and
+phone show the same order; the phone-only CSS rule that reordered them (WP38) was removed as redundant.
+**Verification.** Live panel at 127.0.0.1:8765, desktop and 375 px phone width: Lane 1 (race_v4_contact,
+progress, validation times) is the first thing under the header; UI tests pass.

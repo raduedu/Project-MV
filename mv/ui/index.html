@@ -129,8 +129,6 @@ details.morecars > summary { cursor: pointer; color: var(--muted); font-size: 13
   header .b { padding: 6px 10px; }
   main { padding: 10px 10px 40px; }
   .card { padding: 12px; margin-bottom: 10px; border-radius: 8px; overflow-x: auto; }
-  #tab-dash:not(.hidden) { display: flex; flex-direction: column; }
-  #tab-dash #lanes { order: -1; }                         /* training progress first */
   .row { flex-direction: column; gap: 0; }
   .metrics { gap: 4px 12px; }
   table { font-size: 12.5px; } td, th { padding: 6px 5px; }
@@ -174,8 +172,8 @@ details.morecars > summary { cursor: pointer; color: var(--muted); font-size: 13
 <main>
 <!-- ======================= DASHBOARD ======================= -->
 <section id="tab-dash">
+  <div id="lanes"></div>                                    <!-- training progress first (owner, WP67) -->
   <div class="card"><h2>Fastest laps <span class="muted" style="font-weight:400">- press &#9654; to watch them driven</span></h2><div id="fastest" class="muted">No recorded laps yet.</div></div>
-  <div id="lanes"></div>
   <div class="card">
     <h2>Supervisor log</h2>
     <pre id="planlog" class="muted"></pre>
