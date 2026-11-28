@@ -44,7 +44,8 @@ def test_rear_end_keeps_momentum_and_blames_the_car_behind(car):  # noqa: F811
     env._locate()
     sim = env.sim
     p_before = float(sim.vx.sum())                       # equal masses: momentum ~ sum of speeds
-    closing, at_fault = env._collide()
+    closing, at_fault, touching, touching_ahead = env._collide()
+    assert touching.tolist() == [1.0, 1.0] and touching_ahead.tolist() == [1.0, 0.0]
     assert float(closing[0]) == pytest.approx(20.0, rel=0.02) and float(closing[1]) == pytest.approx(20.0, rel=0.02)
     assert float(at_fault[0]) == pytest.approx(20.0, rel=0.02) and float(at_fault[1]) == 0.0
     assert float(sim.vx.sum()) == pytest.approx(p_before, rel=1e-3)
@@ -60,8 +61,26 @@ def test_cars_apart_do_not_touch(car):  # noqa: F811
     _put(env, 0, 100.0, -2.5, 30.0)
     _put(env, 1, 101.0, 2.5, 30.0)                       # side by side, 5 m apart
     env._locate()
-    closing, _ = env._collide()
-    assert float(closing.abs().sum()) == 0.0
+    closing, _, touching, _ = env._collide()
+    assert float(closing.abs().sum()) == 0.0 and float(touching.sum()) == 0.0
+
+
+def test_leaning_on_a_car_costs_time(car):  # noqa: F811
+    """WP66: two cars nose to tail at the SAME speed, bodies overlapping 0.1 m - closing speed 0, so the
+    closing-speed penalty is 0; the per-second penalty still charges both (the one behind twice):
+    reward difference = contact_time_penalty x (1 or 2) x control_dt."""
+    rewards = []
+    for pen in (0.0, 1.0):
+        env = _pair(car, contact_time_penalty=pen)
+        gap = car.chassis.length_m - 0.1
+        _put(env, 0, 100.0, 0.0, 20.0)
+        _put(env, 1, 100.0 + gap, 0.0, 20.0)
+        env._locate()
+        _, rew, *_ = env.step(torch.zeros(2, 2))
+        rewards.append(rew)
+    diff = (rewards[0] - rewards[1]).tolist()
+    dt = env.cfg.control_dt
+    assert diff[0] == pytest.approx(2 * dt, rel=1e-3) and diff[1] == pytest.approx(dt, rel=1e-3)
 
 
 def test_opponents_seen_within_sensor_range(car):  # noqa: F811

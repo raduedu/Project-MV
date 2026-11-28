@@ -2443,3 +2443,72 @@ First try: `--dry-run` (the AI drives, the bot prints what it would do).
 
 **Next.** Evaluate `race_v2_recover` (Nordschleife at 120 m, laps 1-3, non-strict + strict) and
 `race_v3_racing` (`race_eval.py` against the baseline above); the owner's first in-game test.
+
+## WP66 — Race bot: results of race_v2 and race_v3; leaning on a car was free, fixed (race_v4) 🕓 (race_v4 training)
+
+**Objective.** Measure what 6 h of self-recovery + own map training (`race_v2_recover`) and the same plus
+racing others (`race_v3_racing`) gained over the base driver `multi_v5_zigzag/best` (v5), and whether
+stage 4 (racing others) works.
+
+**Approach.** The same probes as for the baseline (WP61, WP62, WP64), on the CPU, all evaluation only
+(no learning: `torch.no_grad`, networks in eval mode; the checkpoints' dates were checked afterwards):
+* the 10 validation circuits + Nordschleife, 120 m sensors, 2 laps, strict and with self-recovery;
+* Nordschleife, 120 m, 3 laps with the own map;
+* `scripts/race_eval.py`: 4 cars, 3 laps, test car last on the grid, rivals at 95 % power.
+
+**Important caveat.** The race runs train with `--real-tracks all`, so 7 of the 10 validation circuits
+(Imola, Red Bull Ring, Monza, Spa, Barcelona, Silverstone, Zandvoort) were also *training* circuits. Only
+**Nordschleife, Mugello, Laguna Seca and Brands Hatch GP** were never driven in training; those are the
+fair test. (v5 never trained on any real circuit.)
+
+**Verification - laps (120 m sensors, strict; lap 2 = flying lap, s).**
+
+| | v5 | v2 best | v2 latest | v3 best | v3 latest |
+|---|---|---|---|---|---|
+| circuits completed (of 11) | 9 | **11** | **11** | 10 (off at Spa) | **11** |
+| Mugello (unseen) | 132.55 | 128.63 | 128.46 | 128.81 | 128.86 |
+| Laguna Seca (unseen) | 99.64 | 97.53 | 97.35 | 98.35 | 98.28 |
+| Brands Hatch GP (unseen) | 101.18 | 99.07 | 98.58 | 99.63 | 98.97 |
+| Nordschleife (unseen) lap 1 / lap 2 | 515.3 / 512.7 | 506.5 / 472.7 | 510.4 / 470.1 | 500.9 / 471.9 | 502.7 / **469.0** |
+
+v5's laps here are without the own map (it was not trained with it). With its own map switched on (WP62)
+v5 did 8:35.1 / 7:56.5; the trained drivers do lap 2 in 7:49-7:53 - **4-8 s faster than v5 even when v5
+was given the whole circuit in advance (7:56.0)**. 3-lap own-map runs: v2 best 8:26.5 / 7:52.7 / 7:51.6,
+v3 best 8:20.9 / 7:51.9 / 7:51.9. Unseen GP circuits: 1.5-4 s faster per lap. With self-recovery allowed
+the times are within 0.6 s of the strict ones and there were 1-2 excursions in 22 laps, all rejoined.
+
+**Verification - races (contact steps = steps with a closing speed > 0).**
+
+| | Spa | Monza | Brands Hatch GP |
+|---|---|---|---|
+| v5 (cannot see cars, WP64) | P1, 22 contacts | all 4 cars out | P1, 65 contacts |
+| v2 best (cannot see cars) | P1, 34 | P1, 524 | P1, 151 |
+| v3 best (sees 3 cars) | P1, 284 | P4, 666 (glued to a rival) | P3, 91 |
+| v3 latest | P3 (+2), 67 | P2 (+2), 24 | P2 (+2), 14 |
+
+**Problems & resolutions.**
+1. **Stage 4 not learned: leaning on another car was free.** Measured with a probe recording the
+   closing speed at every contact: 85-92 % of race_v3's contact steps had a closing speed below
+   0.1 m/s (median 0.008 m/s at Monza) - the cars were *leaning on each other*. The penalty scaled with
+   closing speed only, so a whole race of contact cost race_v3 the reward of 31 m of progress (~1 s),
+   race_v2 68 m. Cars in a group do differ in pace (car variation 0.70-1.40x power), so overtakes were
+   possible; contact was simply the cheaper way. **Fix (D-050):** `contact_time_penalty` = 1.0 per
+   second of touching another car (2.0 for the car behind) on top of the closing-speed term, i.e. a
+   second of leaning costs as much as 4-8 m of progress. Reward only - the observation is unchanged, so
+   the run continues from race_v3. Test `test_leaning_on_a_car_costs_time` (two cars nose to tail at
+   the same speed: closing 0, reward lower by exactly 1x/2x the decision time). 16 race/graph/race-bot
+   tests pass. **`race_v4_contact`** started 13:09 (from `race_v3_racing/latest.pt`, same settings, 5 h).
+2. **"best" was not the best.** `race_v3_racing/best.pt` (chosen by the validation score) left the road
+   at Spa's Bus Stop on lap 1 at exactly 120 m sensors (fine at 100 and 150 m); `latest.pt` completed all
+   11 and raced far cleaner. With validation at 94-100 % on 16 circuits, one run per circuit cannot rank
+   checkpoints; for these runs `latest.pt` is the one to use.
+3. **One race is not a measurement.** The same race_v2 race at Monza ended P1 in `race_eval.py` and DNF
+   in the probe (2 CPU threads instead of 1 change the rounding; contacts amplify it). Race results need
+   several grids per circuit before they are compared closely.
+
+Housekeeping: `multi_v6_mid` (crashed 24 Nov; its retry `multi_v6_mid2` is kept) was taken out of the
+plan and its run folder moved to the recycle bin at the owner's request.
+
+**Next steps.** Evaluate `race_v4_contact` the same way (laps must not get worse; contacts and places);
+`race_eval.py` over several grids; the owner's first in-game race with `race_v3_racing/latest.pt` (or
+race_v4 when it is better).

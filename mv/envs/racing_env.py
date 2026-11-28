@@ -155,6 +155,10 @@ class EnvConfig:
     spawn_gap_m: tuple[float, float] = (8.0, 60.0)   # distance to that mate, ahead or behind
     contact_restitution: float = 0.3             # bounce: 0 = cars stick together, 1 = perfectly elastic
     contact_penalty: float = 1.0                 # per 10 m/s of closing speed at contact; doubled for the car behind
+    # per second of touching another car at all, doubled for the car behind (WP66). The closing-speed
+    # penalty alone made leaning on a car free (closing ~0 m/s once in contact): race_v3 pushed a rival for
+    # 27 s at Monza and a whole race of contact cost it ~1 s of progress. 1.0/s = 4 m of progress per second.
+    contact_time_penalty: float = 1.0
 
 
 def _wrap_angle(a: torch.Tensor) -> torch.Tensor:
@@ -465,15 +469,16 @@ class RacingEnv:
         same = (tid[:, None, :] == tid[:, :, None]) & ~eye
         return gap, same
 
-    def _collide(self) -> tuple[torch.Tensor, torch.Tensor]:
+    def _collide(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Contacts between cars of the same race (once per decision, after the physics).
 
         Each body is three circles along its length.  Where two overlap, the cars are pushed apart and get
         an impulse along the line between the circle centres, as in a collision of two rigid bodies with
         some bounce (``contact_restitution``); the impulse acts at the contact point, so it also turns the
         car.  Crude, but it makes contact cost what it costs on track: speed, direction, often a spin.
-        Returns per car the closing speed at contact (m/s, 0 = none) and the part of it where this car
-        was the one behind (rear-ending is the usual fault in racing).
+        Returns per car: the closing speed at contact (m/s, 0 = none); the part of it where this car was
+        the one behind (rear-ending is the usual fault in racing); whether it touches another car at all
+        (1/0, also when merely leaning on it at ~0 m/s); and whether it touches a car ahead of it.
         """
         sim, B, G = self.sim, self.n // self.G, self.G
         r = self.body_r
@@ -512,7 +517,9 @@ class RacingEnv:
         sim.x = sim.x + (push * nx).sum(2).reshape(-1)
         sim.y = sim.y + (push * ny).sum(2).reshape(-1)
         behind = (gap > 0).float()                                         # j is ahead of i
-        return closing.sum(2).reshape(-1), (closing * behind).sum(2).reshape(-1)
+        touching = touch.any(2).reshape(-1).float()
+        touching_ahead = (touch & (gap > 0)).any(2).reshape(-1).float()
+        return closing.sum(2).reshape(-1), (closing * behind).sum(2).reshape(-1), touching, touching_ahead
 
     def _opponents(self, ids: torch.Tensor) -> torch.Tensor:
         """The ``opponents`` nearest other cars of the race that the sensors can see: up to the sensor
@@ -810,10 +817,10 @@ class RacingEnv:
         for _ in range(cfg.substeps):
             sim.step(steer, thr, brk)
         if self.G > 1:                             # cars of the same race touching
-            closing, at_fault = self._collide()
+            closing, at_fault, touching, touching_ahead = self._collide()
             self.contacts += (closing > 0).long()
         else:
-            closing = at_fault = torch.zeros_like(self.t_ep)
+            closing = at_fault = touching = touching_ahead = torch.zeros_like(self.t_ep)
         progress = self._locate()
         self.t_ep += cfg.control_dt
         self.ep_len += 1
@@ -832,7 +839,8 @@ class RacingEnv:
                   - cfg.edge_penalty * over_pos.clamp(max=3.0) - cfg.edge_penalty_const * (over > 0).float()
                   - cfg.smooth_penalty * jerk - cfg.steer_penalty * steer_jerk
                   - cfg.steer_zigzag_penalty * zigzag
-                  - cfg.contact_penalty * (closing + at_fault) / 10.0)
+                  - cfg.contact_penalty * (closing + at_fault) / 10.0
+                  - cfg.contact_time_penalty * (touching + touching_ahead) * cfg.control_dt)
 
         # ---- end of episode? -------------------------------------------------------
         speed = torch.sqrt(sim.vx ** 2 + sim.vy ** 2)

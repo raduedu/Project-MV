@@ -613,3 +613,15 @@ supersedes it — do not edit history.*
 * **Why.** Driving the AI slot keeps the game's own physics for both cars (equal machinery by
   construction). A separate app leaves the tested MV Bridge untouched. Reporting `control_ok` turns the
   one thing that cannot be tested here into a check the game makes itself.
+### D-050 — Touching another car costs time, not only the closing speed (supersedes part of D-048)
+
+* **Context.** D-048 charged contact per closing speed. Measured (WP66): once in contact the closing
+  speed is ~0, so leaning on or pushing a car was free - race_v3 pushed a rival for 27 s at Monza and a
+  whole race of contact cost it ~1 s of progress. It never learned to pass cleanly.
+* **Decision.** Add `contact_time_penalty` = 1.0 per second of touching any car, doubled for the car
+  behind; keep the closing-speed term for the hit itself.
+* **Why.** It prices what was missing (sustained contact) with the smallest change: reward only, no new
+  inputs, training continues from race_v3. A brush of 0.2 s costs less than 1 m of progress, so close
+  side-by-side racing stays worth it; 10 s of pushing costs 40-80 m, more than staying behind a slower
+  car for a few corners. Not a safety margin on the driving limit - it is the racing rule against
+  using another car as a brake or a battering ram, and in the game the other car is the owner's.
