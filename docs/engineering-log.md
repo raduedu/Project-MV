@@ -2599,3 +2599,7 @@ gains centimetres - with almost no exploration the safe local optimum wins.
 was stopped; the main finding (tyre use at the apex) does not depend on the reference.
 **Next steps.** A/B from multi_v5/best: restored exploration (`--reset-noise 0.15 --min-noise 0.06`), 3 h,
 judged by the sum of 7 flying laps (828.4 s), apex tyre use (0.67) and share of corners at the limit (49 %).
+**Started (owner's go-ahead, 2026-11-28 15:36).** `multi_v8_explore`, lane 2: multi_v5_zigzag's exact settings,
+from `multi_v5_zigzag/best.pt`, plus `--reset-noise 0.15 --min-noise 0.06`, 3 h. Confirmed: noise 0.15 at
+update 1; first validation 16/16 (and 16/16 with the held-out 992 GT3 RS). Runs beside race_v4 (lane 1), so
+both train more slowly until ~18:10.
