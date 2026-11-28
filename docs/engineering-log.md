@@ -2548,3 +2548,54 @@ multi_v2 3 %, multi_v5 5 %, race_v3 6 %); today's drivers barely saw the wheel a
 **Next steps.** Diagnose where the 4 % is lost against the reference lap (braking points, minimum speeds,
 throttle pick-up per corner) before training anything; suspects: exploration noise at its floor (0.03) since
 multi_v1, the ~8 s horizon (gamma 0.995).
+
+## WP69 — Diagnosis: where the ~4 % to the reference lap goes - the driver corners below the limit ✅ (measured)
+
+**Objective (owner, 2026-11-28).** Find where the learned driver loses its ~4 % to the physics reference lap,
+after WP68 showed solo pace has not improved since multi_v2.
+**Approach.** Evaluation only (no learning). 911 GT3 RS, full map, strict, flying lap (lap 2) on Imola, RBR,
+Monza, Mugello, Spa against the saved reference laps (`runs/reference`, computed 17-18 Nov). Time difference
+at every track station, split by phase using the reference's own accelerations (braking ax < -1.5 m/s^2;
+corner |ay| > 6; exit ax > 0.5 with lateral load; straight otherwise) and by corner (reference speed minima).
+Then tyre utilisation sigma at the slowest point of every corner (needs no reference), at grip 0.88-1.05.
+
+**Verification - where the time goes (sum of 5 circuits, s).**
+
+| Driver | braking | mid-corner | exit | straights | corner min speed | exit speed | braking point |
+|---|---|---|---|---|---|---|---|
+| multi_v5_zigzag | +7.0 | +7.7 | +7.4 | +2.7 | -9.0 km/h | -8.1 km/h | 0.4 m later |
+| multi_v2_steer_light | +4.9 | +7.5 | +8.8 | +3.2 | -9.4 km/h | -6.8 km/h | 0.4 m later |
+| race_v3_racing/latest | +7.6 | +7.3 | +7.8 | +2.7 | -9.6 km/h | -8.0 km/h | 0.1 m earlier |
+
+Braking points are right on average (a few heavy zones excepted: Imola T1 +57 m, Monza T1 +27-63 m early);
+the use of width is close to the reference (2.3-2.6 m to the inside at the apex vs 2.7 m). The time is lost
+because the car is **~9 km/h too slow at the apex** - braking deeper than needed, then exiting slower.
+
+**Verification - tyre use at the apex (median of ~45 corners; 1.0 = the limit).**
+
+| Driver | front | rear | corners at the limit (any tyre >= 0.95) |
+|---|---|---|---|
+| multi_v1 | 0.82 | 1.14 | 68 % |
+| multi_v2_steer_light | 0.73 | 1.13 | 56 % |
+| multi_v5_zigzag | 0.67 | 0.79 | 49 % |
+| race_v2_recover/best | 0.60 | 0.65 | 38 % |
+| race_v3_racing/latest | 0.61 | 1.11 | 58 % (rear sliding, front unused) |
+
+Same driver (multi_v5) with hidden grip: 0.88 - off at Imola and Spa; 0.94 - 640.4 s (apex front 0.70, 52 %
+at limit); 1.00 - 631.6 s (0.67, 49 %); 1.05 - 625.9 s (0.64, 41 %). +5 % grip gave -0.9 % lap time
+where a grip-limited lap would gain ~2 %.
+
+**Findings.** (1) The driver corners **below the limit**: at the slowest point of a corner the front tyres
+use ~2/3 of their grip and half the corners never reach it - against the project's first principle.
+(2) It drives a habitual corner speed, not the grip it has: more grip is mostly not used. It is not a
+worst-case margin either (at 0.88 it crashes). (3) The habit grew generation by generation (front use at
+the apex 0.82 -> 0.73 -> 0.67 -> 0.60); the lap time was made up elsewhere, so the validation score never
+showed it. (4) Exploration noise sat at its floor (std 0.03) for the whole lineage: PPO only tries tiny
+variations around what it does, so a faster corner speed that first needs a few failures is never found.
+Plus the asymmetry: a strict crash ends the episode (loses every future reward), a little more apex speed
+gains centimetres - with almost no exploration the safe local optimum wins.
+
+**Problems.** The reference recomputation (to rule out stale references) took > 40 min for one circuit and
+was stopped; the main finding (tyre use at the apex) does not depend on the reference.
+**Next steps.** A/B from multi_v5/best: restored exploration (`--reset-noise 0.15 --min-noise 0.06`), 3 h,
+judged by the sum of 7 flying laps (828.4 s), apex tyre use (0.67) and share of corners at the limit (49 %).
