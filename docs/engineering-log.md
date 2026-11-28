@@ -2520,3 +2520,31 @@ race_v4 when it is better).
 phone show the same order; the phone-only CSS rule that reordered them (WP38) was removed as redundant.
 **Verification.** Live panel at 127.0.0.1:8765, desktop and 375 px phone width: Lane 1 (race_v4_contact,
 progress, validation times) is the first thing under the header; UI tests pass.
+
+## WP68 — Driving character: the older drivers slid more, but were not faster ✅ (measured)
+
+**Owner (2026-11-28):** "some of our older models (like multi_v2) ... were incredibly on edge and could pull out
+great lap times - could we improve upon that?"
+**Approach.** 911 GT3 RS, full map, strict, 7 circuits (Imola, RBR, Monza, Mugello, Spa, Laguna Seca, Brands
+Hatch GP), 2 laps, evaluation only. Recorded each wheel's tyre utilisation sigma (combined slip / slip of peak
+grip; 1 = at the peak, >1 = past it) at every decision above 15 m/s.
+
+| Driver | Sum of 7 flying laps | at the limit (sigma >= 0.95) | past the peak (> 1.05) | rear past the peak |
+|---|---|---|---|---|
+| multi_v1 | off at Monza (6/7) | 28.7 % | 13.6 % | 13.0 % |
+| multi_v2_steer_light | 828.5 s | 27.1 % | 9.8 % | 9.7 % |
+| multi_v2_steer_penalty | 829.8 s | 28.5 % | 11.5 % | 11.2 % |
+| multi_v3_cars | 831.0 s | 25.9 % | 9.2 % | 9.0 % |
+| multi_v5_zigzag | 828.4 s | 23.2 % | 7.0 % | 7.0 % |
+| multi_v7_racing | 830.1 s | 23.5 % | 7.6 % | 7.4 % |
+| race_v3_racing/latest | 829.2 s | 22.2 % | 7.3 % | 7.2 % |
+
+**Findings.** (1) The owner's impression is measurable: the early drivers spent ~2x as much time with the rear
+past its peak (oversteer slides). (2) It did not buy lap time: multi_v2_steer_light and multi_v5 are within
+0.1 s over seven laps; past the peak our tyre force drops. (3) **Solo pace has plateaued since multi_v2** at
+~4 % off the physics ideal; later work bought reliability, car generality, recovery and racing, not speed.
+(4) Suspected cause rejected: only 3-7 % of the zig-zag penalty falls on sliding moments (multi_v1 7 %,
+multi_v2 3 %, multi_v5 5 %, race_v3 6 %); today's drivers barely saw the wheel at all.
+**Next steps.** Diagnose where the 4 % is lost against the reference lap (braking points, minimum speeds,
+throttle pick-up per corner) before training anything; suspects: exploration noise at its floor (0.03) since
+multi_v1, the ~8 s horizon (gamma 0.995).
